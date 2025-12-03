@@ -35,10 +35,11 @@
 /// Generated types for graphql.proto options.
 #[allow(clippy::all)]
 pub mod graphql {
-    include!(concat!(env!("OUT_DIR"), "/graphql.rs"));
+    include!("generated/graphql.rs");
 }
 
 pub mod error;
+pub mod federation;
 pub mod gateway;
 pub mod grpc_client;
 pub mod middleware;
@@ -47,6 +48,7 @@ pub mod schema;
 pub mod types;
 
 pub use error::{Error, Result};
+pub use federation::{EntityResolver, FederationConfig, GrpcEntityResolver};
 pub use gateway::{Gateway, GatewayBuilder};
 pub use grpc_client::GrpcClient;
 pub use middleware::{Context, Middleware};

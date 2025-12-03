@@ -49,6 +49,7 @@ pub struct GatewayBuilder {
     schema_builder: SchemaBuilder,
     middlewares: Vec<Arc<dyn Middleware>>,
     error_handler: Option<Arc<dyn Fn(Vec<GraphQLError>) + Send + Sync>>,
+    entity_resolver: Option<Arc<dyn crate::federation::EntityResolver>>,
 }
 
 impl GatewayBuilder {
@@ -59,6 +60,7 @@ impl GatewayBuilder {
             schema_builder: SchemaBuilder::new(),
             middlewares: Vec::new(),
             error_handler: None,
+            entity_resolver: None,
         }
     }
 
@@ -91,6 +93,22 @@ impl GatewayBuilder {
         self
     }
 
+    /// Provide a custom entity resolver for federation.
+    pub fn with_entity_resolver(
+        mut self,
+        resolver: Arc<dyn crate::federation::EntityResolver>,
+    ) -> Self {
+        self.entity_resolver = Some(resolver.clone());
+        self.schema_builder = self.schema_builder.with_entity_resolver(resolver);
+        self
+    }
+
+    /// Enable GraphQL federation features.
+    pub fn enable_federation(mut self) -> Self {
+        self.schema_builder = self.schema_builder.enable_federation();
+        self
+    }
+
     /// Provide a protobuf descriptor set file
     pub fn with_descriptor_set_file(mut self, path: impl AsRef<Path>) -> Result<Self> {
         self.schema_builder = self.schema_builder.with_descriptor_set_file(path)?;
@@ -108,7 +126,12 @@ impl GatewayBuilder {
 
     /// Build the gateway
     pub fn build(self) -> Result<Gateway> {
-        let schema = self.schema_builder.build(&self.client_pool)?;
+        let mut schema_builder = self.schema_builder;
+        if let Some(resolver) = self.entity_resolver {
+            schema_builder = schema_builder.with_entity_resolver(resolver);
+        }
+
+        let schema = schema_builder.build(&self.client_pool)?;
         let mut mux = ServeMux::new(schema.clone());
 
         // Add middlewares

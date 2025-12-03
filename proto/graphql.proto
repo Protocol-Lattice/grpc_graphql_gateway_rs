@@ -179,6 +179,45 @@ message GraphqlField {
   bool omit = 4;
   // Resolve this field by nested query with additional RPC
   string resolver = 5;
+  // Federation: Mark this field as external (part of another service's entity)
+  bool external = 6;
+  // Federation: Specify fields this field requires from other services
+  string requires = 7;
+  // Federation: Specify fields this field provides to the supergraph
+  string provides = 8;
+}
+
+// Federation configuration for message types (entities).
+// User can use this option to define federated entities:
+//
+// message User {
+//   option (graphql.entity) = {
+//     keys: "id"
+//     keys: "email"
+//   };
+//   string id = 1;
+//   string email = 2;
+//   string name = 3;
+// }
+//
+// For extending entities from another service:
+//
+// message Product {
+//   option (graphql.entity) = {
+//     extend: true
+//     keys: "upc"
+//   };
+//   string upc = 1 [(graphql.field) = {external: true}];
+//   int32 stock = 2;
+// }
+message GraphqlEntity {
+  // List of key fields or field sets that uniquely identify this entity
+  // Each key can be a single field name or a field set like "id email"
+  repeated string keys = 1;
+  // If true, this message extends an entity defined in another service
+  bool extend = 2;
+  // If specified, this service will be resolvable (implements _entities resolver)
+  bool resolvable = 3;
 }
 
 // Extend builtin messages
@@ -193,6 +232,10 @@ extend google.protobuf.ServiceOptions {
 
 extend google.protobuf.FieldOptions {
   GraphqlField field = 1079;
+}
+
+extend google.protobuf.MessageOptions {
+  GraphqlEntity entity = 1079;
 }
 
 extend google.protobuf.MethodOptions {

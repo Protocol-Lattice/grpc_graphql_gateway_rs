@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Axum-based HTTP server with routing
 - Example greeter service demonstrating all features
 - Full async/await support with Tokio runtime
+- **GraphQL Federation v2 support**
+  - Entity definitions via `graphql.entity` proto option
+  - Entity key support (single and composite keys)
+  - Entity extensions with `@extends` directive
+  - Field-level federation directives: `@external`, `@requires`, `@provides`
+  - Automatic `_entities` query generation for entity resolution
+  - `EntityResolver` trait for custom entity resolution logic
+  - Federation example in `proto/federation_example.proto`
+  - Comprehensive federation documentation
 
 ### Architecture
 - `gateway` module - Main orchestration and builder

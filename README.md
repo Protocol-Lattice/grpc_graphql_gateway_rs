@@ -210,6 +210,149 @@ let builder = Gateway::builder()
 
 `Upload` inputs follow the GraphQL multipart request spec and are valid on mutations.
 
+## GraphQL Federation
+
+This gateway supports [Apollo Federation v2](https://www.apollographql.com/docs/federation/), enabling you to compose multiple GraphQL services into a unified supergraph.
+
+### Enabling Federation
+
+Enable federation support when building your gateway:
+
+```rust
+let gateway = Gateway::builder()
+    .with_descriptor_set_bytes(DESCRIPTORS)
+    .enable_federation()  // Enable federation support
+    .add_grpc_client("service", client)
+    .build()?;
+```
+
+### Defining Entities
+
+Mark protobuf messages as federated entities using the `graphql.entity` option:
+
+```protobuf
+message User {
+  option (graphql.entity) = {
+    keys: "id"              // Primary key field
+    resolvable: true        // This service can resolve this entity
+  };
+  
+  string id = 1 [(graphql.field) = { required: true }];
+  string email = 2;
+  string name = 3;
+}
+```
+
+**Multiple Keys**: Support composite keys and multiple key definitions:
+```protobuf
+message Product {
+  option (graphql.entity) = {
+    keys: "upc"           // Single field key
+    keys: "sku type"      // Composite key (multiple fields)
+  };
+  
+  string upc = 1;
+  string sku = 2;
+  string type = 3;
+}
+```
+
+### Extending Entities
+
+Extend entities from other services using `extend: true`:
+
+```protobuf
+message UserExtension {
+  option (graphql.entity) = {
+    extend: true          // This extends User from another service
+    keys: "id"
+  };
+  
+  string id = 1 [(graphql.field) = { 
+    external: true        // This field is defined in another service
+    required: true 
+  }];
+  
+  repeated Review reviews = 2 [(graphql.field) = {
+    requires: "id"        // This field requires `id` from the base entity
+  }];
+}
+```
+
+### Field-Level Federation Directives
+
+#### `@external`
+Mark fields that are defined in another service:
+```protobuf
+string user_id = 1 [(graphql.field) = { external: true }];
+```
+
+#### `@requires`
+Specify fields needed from other services to resolve this field:
+```protobuf
+int32 total_reviews = 2 [(graphql.field) = { requires: "id email" }];
+```
+
+#### `@provides`
+Indicate which fields this field provides to the supergraph:
+```protobuf
+User author = 3 [(graphql.field) = { provides: "id name" }];
+```
+
+### Entity Resolution
+
+When federation is enabled and entities are defined, the gateway automatically exposes the `_entities` query for entity resolution. The current implementation returns entity representations as-is; for production use, implement a custom `EntityResolver`:
+
+```rust
+use grpc_graphql_gateway::{EntityResolver, FederationConfig};
+
+struct MyEntityResolver {
+    // Your gRPC clients or other resolution logic
+}
+
+#[async_trait::async_trait]
+impl EntityResolver for MyEntityResolver {
+    async fn resolve_entity(
+        &self,
+        entity_config: &EntityConfig,
+        representation: &IndexMap<Name, Value>,
+    ) -> Result<Value> {
+        // 1. Extract key fields from representation
+        // 2. Call appropriate gRPC service
+        // 3. Return resolved entity
+        todo!("Implement entity resolution")
+    }
+}
+```
+
+### Federation Schema Features
+
+When federation is enabled, the gateway automatically:
+- ✅ Adds `@key` directives to entity types
+- ✅ Adds `@extends` directive to entity extensions
+- ✅ Adds `@external`, `@requires`, `@provides` directives to fields
+- ✅ Exposes `_entities(representations: [_Any!]!)` query
+- ✅ Exposes `_service { sdl }` query (via async-graphql)
+- ✅ Registers entity types in the `_Entity` union
+
+### Example: Federated Microservices
+
+See `proto/federation_example.proto` for a complete example showing:
+- User service (defines the User entity)
+- Product service (defines Product entity, references User)
+- Review service (extends both User and Product entities)
+
+Each service can be deployed independently while participating in a unified federated graph.
+
+### Federation Best Practices
+
+1. **Define clear entity boundaries**: Each service should own its entities
+2. **Use composite keys when needed**: For entities with multiple identifying fields
+3. **Mark external fields correctly**: Avoid duplicating field resolution logic
+4. **Use `@provides` sparingly**: Only when you're returning partial entities
+5. **Keep `@requires` minimal**: Only specify fields you actually need
+
+
 ## Development
 - Format: `cargo fmt`
 - Lint/tests: `cargo test`

@@ -167,6 +167,51 @@ pub struct GraphqlField {
     /// Resolve this field by nested query with additional RPC
     #[prost(string, tag = "5")]
     pub resolver: ::prost::alloc::string::String,
+    /// Federation: Mark this field as external (part of another service's entity)
+    #[prost(bool, tag = "6")]
+    pub external: bool,
+    /// Federation: Specify fields this field requires from other services
+    #[prost(string, tag = "7")]
+    pub requires: ::prost::alloc::string::String,
+    /// Federation: Specify fields this field provides to the supergraph
+    #[prost(string, tag = "8")]
+    pub provides: ::prost::alloc::string::String,
+}
+/// Federation configuration for message types (entities).
+/// User can use this option to define federated entities:
+///
+/// message User {
+///    option (graphql.entity) = {
+///      keys: "id"
+///      keys: "email"
+///    };
+///    string id = 1;
+///    string email = 2;
+///    string name = 3;
+/// }
+///
+/// For extending entities from another service:
+///
+/// message Product {
+///    option (graphql.entity) = {
+///      extend: true
+///      keys: "upc"
+///    };
+///    string upc = 1 \[(graphql.field) = {external: true}\];
+///    int32 stock = 2;
+/// }
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GraphqlEntity {
+    /// List of key fields or field sets that uniquely identify this entity
+    /// Each key can be a single field name or a field set like "id email"
+    #[prost(string, repeated, tag = "1")]
+    pub keys: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// If true, this message extends an entity defined in another service
+    #[prost(bool, tag = "2")]
+    pub extend: bool,
+    /// If specified, this service will be resolvable (implements _entities resolver)
+    #[prost(bool, tag = "3")]
+    pub resolvable: bool,
 }
 /// explicit schema declaration enum
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]

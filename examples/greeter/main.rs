@@ -15,7 +15,7 @@ use tonic::{transport::Server, Request, Response, Status};
 use tracing::info;
 
 pub mod greeter {
-    tonic::include_proto!("greeter");
+    include!("../../src/generated/greeter.rs");
 }
 
 use greeter::greeter_server::{Greeter, GreeterServer};
@@ -24,7 +24,7 @@ use greeter::{
     UploadAvatarRequest, UploadAvatarsReply, UploadAvatarsRequest, User,
 };
 
-const DESCRIPTORS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/greeter_descriptor.bin"));
+const DESCRIPTORS: &[u8] = include_bytes!("../../src/generated/greeter_descriptor.bin");
 const GRPC_ADDR: &str = "127.0.0.1:50051";
 const GQL_ADDR: &str = "127.0.0.1:8888";
 
