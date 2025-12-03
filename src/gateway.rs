@@ -50,6 +50,7 @@ pub struct GatewayBuilder {
     middlewares: Vec<Arc<dyn Middleware>>,
     error_handler: Option<Arc<dyn Fn(Vec<GraphQLError>) + Send + Sync>>,
     entity_resolver: Option<Arc<dyn crate::federation::EntityResolver>>,
+    service_allowlist: Option<std::collections::HashSet<String>>,
 }
 
 impl GatewayBuilder {
@@ -61,6 +62,7 @@ impl GatewayBuilder {
             middlewares: Vec::new(),
             error_handler: None,
             entity_resolver: None,
+            service_allowlist: None,
         }
     }
 
@@ -103,6 +105,19 @@ impl GatewayBuilder {
         self
     }
 
+    /// Restrict the schema to the provided gRPC service full names.
+    pub fn with_services<I, S>(mut self, services: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let set: std::collections::HashSet<String> =
+            services.into_iter().map(Into::into).collect();
+        self.schema_builder = self.schema_builder.with_services(set.clone());
+        self.service_allowlist = Some(set);
+        self
+    }
+
     /// Enable GraphQL federation features.
     pub fn enable_federation(mut self) -> Self {
         self.schema_builder = self.schema_builder.enable_federation();
@@ -129,6 +144,9 @@ impl GatewayBuilder {
         let mut schema_builder = self.schema_builder;
         if let Some(resolver) = self.entity_resolver {
             schema_builder = schema_builder.with_entity_resolver(resolver);
+        }
+        if let Some(services) = self.service_allowlist {
+            schema_builder = schema_builder.with_services(services);
         }
 
         let schema = schema_builder.build(&self.client_pool)?;

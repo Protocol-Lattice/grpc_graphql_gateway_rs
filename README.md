@@ -348,7 +348,7 @@ Each service can be deployed independently while participating in a unified fede
 
 Use Apollo Router in front of the federated subgraph exposed by `cargo run --bin federation`:
 
-1. Start the gRPC services + GraphQL subgraph on `http://127.0.0.1:8890/graphql`:
+1. Start the gRPC services + three GraphQL subgraphs:
    ```bash
    cargo run --bin federation
    ```
@@ -361,7 +361,7 @@ Use Apollo Router in front of the federated subgraph exposed by `cargo run --bin
    ```bash
    router --supergraph examples/federation/supergraph.graphql --dev
    ```
-4. Send requests to the router at `http://127.0.0.1:4000/` (or hit the subgraph directly if you skip the router). The router hides the `_entities` helper; if you want to call `_entities` directly, target the subgraph at `http://127.0.0.1:8890/graphql`.
+4. Send requests to the router at `http://127.0.0.1:4000/` (or hit the subgraphs directly if you skip the router). The router hides the `_entities` helper; if you want to call `_entities` directly, target the owning subgraph (e.g., `http://127.0.0.1:8891/graphql` for `federation_example_User`).
 
 ### Federation Best Practices
 

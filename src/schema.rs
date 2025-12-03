@@ -24,7 +24,7 @@ use prost_reflect::{
     DescriptorPool, DynamicMessage, EnumDescriptor, ExtensionDescriptor, FieldDescriptor, Kind,
     MapKey, MessageDescriptor, ReflectMessage, Value,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -56,6 +56,7 @@ pub struct SchemaBuilder {
     descriptor_bytes: Option<Vec<u8>>,
     federation: bool,
     entity_resolver: Option<std::sync::Arc<dyn EntityResolver>>,
+    service_allowlist: Option<HashSet<String>>,
 }
 
 impl SchemaBuilder {
@@ -65,6 +66,7 @@ impl SchemaBuilder {
             descriptor_bytes: None,
             federation: false,
             entity_resolver: None,
+            service_allowlist: None,
         }
     }
 
@@ -90,6 +92,16 @@ impl SchemaBuilder {
     /// Override the entity resolver used for federation.
     pub fn with_entity_resolver(mut self, resolver: std::sync::Arc<dyn EntityResolver>) -> Self {
         self.entity_resolver = Some(resolver);
+        self
+    }
+
+    /// Limit the schema to specific gRPC services (full protobuf service names).
+    pub fn with_services<I, S>(mut self, services: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.service_allowlist = Some(services.into_iter().map(Into::into).collect());
         self
     }
 
@@ -133,6 +145,12 @@ impl SchemaBuilder {
         let mut subscription_root: Option<Subscription> = None;
 
         for service in pool.services() {
+            if let Some(allowlist) = self.service_allowlist.as_ref() {
+                if !allowlist.contains(service.full_name()) {
+                    continue;
+                }
+            }
+
             let service_options =
                 decode_extension::<GraphqlService>(&service.options(), &service_ext)?
                     .unwrap_or_default();

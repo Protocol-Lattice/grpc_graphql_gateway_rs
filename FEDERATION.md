@@ -184,10 +184,10 @@ curl -X POST http://127.0.0.1:4000/ \
   -d "{\"query\":\"{ product(upc:\\\"apollo-1\\\") { upc name price createdBy { id name } } }\"}"
 ```
 
-Resolve an entity directly against the subgraph (`http://127.0.0.1:8890/graphql`). Apollo Router does not expose `_entities` on the supergraph API, but the gateway does:
+Resolve an entity directly against the subgraph (`http://127.0.0.1:8891/graphql` for the User subgraph). Apollo Router does not expose `_entities` on the supergraph API, but the gateway does:
 
 ```bash
-curl -X POST http://127.0.0.1:8890/graphql \
+curl -X POST http://127.0.0.1:8891/graphql \
   -H 'content-type: application/json' \
   -d '{"query":"{ _entities(representations:[{ __typename:\"federation_example_User\", id:\"u1\" }]) { ... on federation_example_User { id email name } } }"}'
 ```

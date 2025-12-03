@@ -25,7 +25,9 @@ const DESCRIPTORS: &[u8] = include_bytes!("../../src/generated/federation_exampl
 const USER_GRPC_ADDR: &str = "127.0.0.1:50051";
 const PRODUCT_GRPC_ADDR: &str = "127.0.0.1:50052";
 const REVIEW_GRPC_ADDR: &str = "127.0.0.1:50053";
-const GATEWAY_ADDR: &str = "127.0.0.1:8890";
+const USER_GRAPH_ADDR: &str = "127.0.0.1:8891";
+const PRODUCT_GRAPH_ADDR: &str = "127.0.0.1:8892";
+const REVIEW_GRAPH_ADDR: &str = "127.0.0.1:8893";
 const ROUTER_ADDR: &str = "127.0.0.1:4000";
 
 #[tokio::main]
@@ -48,7 +50,9 @@ async fn main() -> Result<()> {
         run_user_service(services.clone()),
         run_product_service(services.clone()),
         run_review_service(services.clone()),
-        run_gateway(entity_resolver),
+        run_user_gateway(entity_resolver.clone()),
+        run_product_gateway(entity_resolver.clone()),
+        run_review_gateway(entity_resolver),
     )?;
 
     Ok(())
@@ -90,15 +94,12 @@ async fn run_review_service(services: FederationServices) -> Result<()> {
     Ok(())
 }
 
-async fn run_gateway(entity_resolver: Arc<dyn EntityResolver>) -> Result<()> {
+async fn run_user_gateway(entity_resolver: Arc<dyn EntityResolver>) -> Result<()> {
     let user_client = GrpcClient::builder(format!("http://{USER_GRPC_ADDR}")).connect_lazy()?;
-    let product_client =
-        GrpcClient::builder(format!("http://{PRODUCT_GRPC_ADDR}")).connect_lazy()?;
-    let review_client = GrpcClient::builder(format!("http://{REVIEW_GRPC_ADDR}")).connect_lazy()?;
 
     info!(
-        "Federated subgraph listening on http://{}/graphql",
-        GATEWAY_ADDR
+        "User subgraph listening on http://{}/graphql",
+        USER_GRAPH_ADDR
     );
 
     Gateway::builder()
@@ -107,16 +108,56 @@ async fn run_gateway(entity_resolver: Arc<dyn EntityResolver>) -> Result<()> {
         .with_entity_resolver(entity_resolver)
         .add_grpc_clients([
             ("federation_example.UserService".to_string(), user_client),
-            (
-                "federation_example.ProductService".to_string(),
-                product_client,
-            ),
-            (
-                "federation_example.ReviewService".to_string(),
-                review_client,
-            ),
         ])
-        .serve(GATEWAY_ADDR)
+        .with_services(["federation_example.UserService"])
+        .serve(USER_GRAPH_ADDR)
+        .await?;
+
+    Ok(())
+}
+
+async fn run_product_gateway(entity_resolver: Arc<dyn EntityResolver>) -> Result<()> {
+    let product_client =
+        GrpcClient::builder(format!("http://{PRODUCT_GRPC_ADDR}")).connect_lazy()?;
+
+    info!(
+        "Product subgraph listening on http://{}/graphql",
+        PRODUCT_GRAPH_ADDR
+    );
+
+    Gateway::builder()
+        .with_descriptor_set_bytes(DESCRIPTORS)
+        .enable_federation()
+        .with_entity_resolver(entity_resolver)
+        .add_grpc_clients([(
+            "federation_example.ProductService".to_string(),
+            product_client,
+        )])
+        .with_services(["federation_example.ProductService"])
+        .serve(PRODUCT_GRAPH_ADDR)
+        .await?;
+
+    Ok(())
+}
+
+async fn run_review_gateway(entity_resolver: Arc<dyn EntityResolver>) -> Result<()> {
+    let review_client = GrpcClient::builder(format!("http://{REVIEW_GRPC_ADDR}")).connect_lazy()?;
+
+    info!(
+        "Review subgraph listening on http://{}/graphql",
+        REVIEW_GRAPH_ADDR
+    );
+
+    Gateway::builder()
+        .with_descriptor_set_bytes(DESCRIPTORS)
+        .enable_federation()
+        .with_entity_resolver(entity_resolver)
+        .add_grpc_clients([(
+            "federation_example.ReviewService".to_string(),
+            review_client,
+        )])
+        .with_services(["federation_example.ReviewService"])
+        .serve(REVIEW_GRAPH_ADDR)
         .await?;
 
     Ok(())
@@ -271,7 +312,9 @@ impl FederationData {
 }
 
 fn print_examples() {
-    println!("Federated subgraph: http://{}/graphql", GATEWAY_ADDR);
+    println!("User subgraph:    http://{}/graphql", USER_GRAPH_ADDR);
+    println!("Product subgraph: http://{}/graphql", PRODUCT_GRAPH_ADDR);
+    println!("Review subgraph:  http://{}/graphql", REVIEW_GRAPH_ADDR);
     println!(
         "Apollo Router (after composing supergraph) default: http://{}/",
         ROUTER_ADDR
