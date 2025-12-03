@@ -17,7 +17,7 @@ message User {
   string name = 3;
 }
 
-// Product entity - extends User from another service
+// Product entity - references User for creator
 message Product {
   option (graphql.entity) = {
     keys: "upc"
@@ -29,9 +29,7 @@ message Product {
   int32 price = 3;
   
   // Reference to User entity (this user created the product)
-  User created_by = 4 [(graphql.field) = { 
-    provides: "id email"
-  }];
+  User created_by = 4 [(graphql.field) = { name: "createdBy" }];
 }
 
 // Review entity - extends both Product and User
@@ -43,15 +41,11 @@ message Review {
 
   string id = 1 [(graphql.field) = { required: true }];
   
-  // External reference to Product
-  Product product = 2 [(graphql.field) = { 
-    external: true
-  }];
+  // Reference to Product
+  Product product = 2;
   
-  // External reference to User (the reviewer)
-  User author = 3 [(graphql.field) = {
-    external: true
-  }];
+  // Reference to User (the reviewer)
+  User author = 3;
   
   string body = 4;
   int32 rating = 5;
@@ -102,7 +96,7 @@ message GetReviewResponse {
 }
 
 message GetUserReviewsRequest {
-  string user_id = 1;
+  string user_id = 1 [(graphql.field) = { name: "userId" }];
 }
 
 message GetUserReviewsResponse {

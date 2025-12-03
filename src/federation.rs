@@ -5,12 +5,10 @@
 
 use crate::error::{Error, Result};
 use crate::graphql::GraphqlEntity;
-use async_graphql::dynamic::{Field, FieldFuture, InputValue, Object, TypeRef};
+use async_graphql::dynamic::{Field, FieldFuture, FieldValue, InputValue, Object, TypeRef};
 use async_graphql::{Name, Value as GqlValue};
 use prost::Message;
-use prost_reflect::{
-    DescriptorPool, ExtensionDescriptor, MessageDescriptor, Value,
-};
+use prost_reflect::{DescriptorPool, ExtensionDescriptor, MessageDescriptor, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -64,9 +62,7 @@ impl FederationConfig {
                     .iter()
                     .map(|key| {
                         // Split on whitespace to support composite keys like "orgId userId"
-                        key.split_whitespace()
-                            .map(String::from)
-                            .collect::<Vec<_>>()
+                        key.split_whitespace().map(String::from).collect::<Vec<_>>()
                     })
                     .collect();
 
@@ -92,67 +88,62 @@ impl FederationConfig {
     }
 
     /// Build the _entities field for the Query type
-    pub fn build_entities_field(
+    pub fn build_entities_field_for_query(
         &self,
         entity_resolvers: Arc<dyn EntityResolver>,
     ) -> Result<Field> {
         let config = self.clone();
 
-        let field = Field::new(
-            "_entities",
-            TypeRef::named_nn_list("_Entity"),
-            move |ctx| {
-                let entity_resolvers = entity_resolvers.clone();
-                let config = config.clone();
+        let field = Field::new("_entities", TypeRef::named_nn_list("_Entity"), move |ctx| {
+            let entity_resolvers = entity_resolvers.clone();
+            let config = config.clone();
 
-                FieldFuture::new(async move {
-                    let representations = ctx
-                        .args
-                        .get("representations")
-                        .ok_or_else(|| {
-                            async_graphql::Error::new("missing representations argument")
-                        })?
-                        .list()?;
+            FieldFuture::new(async move {
+                let representations = ctx
+                    .args
+                    .get("representations")
+                    .ok_or_else(|| async_graphql::Error::new("missing representations argument"))?
+                    .list()?;
 
-                    let mut results = Vec::new();
-                    for repr in representations.iter() {
-                        let obj = repr.object()?;
+                let mut results = Vec::new();
+                for repr in representations.iter() {
+                    let obj = repr.object()?;
 
-                        // Convert ObjectAccessor to IndexMap
-                        let mut representation_map = async_graphql::indexmap::IndexMap::new();
-                        for (key, value) in obj.iter() {
-                            representation_map.insert(key.clone(), value.as_value().clone());
-                        }
-
-                        // Extract __typename from representation
-                        let typename = representation_map
-                            .get(&Name::new("__typename"))
-                            .and_then(|v| match v {
-                                GqlValue::String(s) => Some(s.as_str()),
-                                _ => None,
-                            })
-                            .ok_or_else(|| {
-                                async_graphql::Error::new("missing __typename in representation")
-                            })?;
-
-                        // Find entity config
-                        let entity_config = config.entities.get(typename).ok_or_else(|| {
-                            async_graphql::Error::new(format!("unknown entity type: {}", typename))
-                        })?;
-
-                        // Resolve the entity
-                        let entity = entity_resolvers
-                            .resolve_entity(entity_config, &representation_map)
-                            .await
-                            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-
-                        results.push(entity);
+                    // Convert ObjectAccessor to IndexMap
+                    let mut representation_map = async_graphql::indexmap::IndexMap::new();
+                    for (key, value) in obj.iter() {
+                        representation_map.insert(key.clone(), value.as_value().clone());
                     }
 
-                    Ok(Some(GqlValue::List(results)))
-                })
-            },
-        )
+                    // Extract __typename from representation
+                    let typename = representation_map
+                        .get(&Name::new("__typename"))
+                        .and_then(|v| match v {
+                            GqlValue::String(s) => Some(s.as_str()),
+                            _ => None,
+                        })
+                        .ok_or_else(|| {
+                            async_graphql::Error::new("missing __typename in representation")
+                        })?;
+
+                    // Find entity config
+                    let entity_config = config.entities.get(typename).ok_or_else(|| {
+                        async_graphql::Error::new(format!("unknown entity type: {}", typename))
+                    })?;
+
+                    // Resolve the entity
+                    let entity = entity_resolvers
+                        .resolve_entity(entity_config, &representation_map)
+                        .await
+                        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+                    results
+                        .push(FieldValue::value(entity).with_type(entity_config.type_name.clone()));
+                }
+
+                Ok(Some(FieldValue::list(results)))
+            })
+        })
         .argument(InputValue::new(
             "representations",
             TypeRef::named_nn_list_nn("_Any"),
@@ -162,11 +153,7 @@ impl FederationConfig {
     }
 
     /// Apply federation directives to an object type
-    pub fn apply_directives_to_object(
-        &self,
-        obj: Object,
-        type_name: &str,
-    ) -> Result<Object> {
+    pub fn apply_directives_to_object(&self, obj: Object, type_name: &str) -> Result<Object> {
         if let Some(entity_config) = self.entities.get(type_name) {
             let mut obj = obj;
 
@@ -179,10 +166,10 @@ impl FederationConfig {
                 } else {
                     obj = obj.unresolvable(fields_str.clone());
                 }
-                obj = obj.directive(async_graphql::dynamic::Directive::new("key").argument(
-                    "fields",
-                    GqlValue::String(fields_str),
-                ));
+                obj = obj.directive(
+                    async_graphql::dynamic::Directive::new("key")
+                        .argument("fields", GqlValue::String(fields_str)),
+                );
             }
 
             // Add @extends directive if this is an extension
@@ -288,7 +275,10 @@ mod tests {
     #[test]
     fn test_entity_config_composite_keys() {
         // Test that key field sets are properly parsed
-        let keys = vec![vec!["id".to_string()], vec!["org".to_string(), "user".to_string()]];
+        let keys = vec![
+            vec!["id".to_string()],
+            vec!["org".to_string(), "user".to_string()],
+        ];
         assert_eq!(keys.len(), 2);
         assert_eq!(keys[0], vec!["id"]);
         assert_eq!(keys[1], vec!["org", "user"]);

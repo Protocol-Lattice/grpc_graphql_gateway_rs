@@ -9,7 +9,7 @@ pub struct User {
     #[prost(string, tag = "3")]
     pub name: ::prost::alloc::string::String,
 }
-/// Product entity - extends User from another service
+/// Product entity - references User for creator
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Product {
     #[prost(string, tag = "1")]
@@ -27,10 +27,10 @@ pub struct Product {
 pub struct Review {
     #[prost(string, tag = "1")]
     pub id: ::prost::alloc::string::String,
-    /// External reference to Product
+    /// Reference to Product
     #[prost(message, optional, tag = "2")]
     pub product: ::core::option::Option<Product>,
-    /// External reference to User (the reviewer)
+    /// Reference to User (the reviewer)
     #[prost(message, optional, tag = "3")]
     pub author: ::core::option::Option<User>,
     #[prost(string, tag = "4")]

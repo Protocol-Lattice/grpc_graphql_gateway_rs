@@ -9,8 +9,8 @@ use crate::federation::{EntityResolver, FederationConfig, GrpcEntityResolver};
 use crate::graphql::{GraphqlField, GraphqlResponse, GraphqlSchema, GraphqlService, GraphqlType};
 use crate::grpc_client::{GrpcClient, GrpcClientPool};
 use async_graphql::dynamic::{
-    Enum, EnumItem, Field, FieldFuture, InputObject, InputValue, Object, ResolverContext,
-    Schema as AsyncSchema, Scalar, Subscription, SubscriptionField, SubscriptionFieldFuture,
+    Enum, EnumItem, Field, FieldFuture, FieldValue, InputObject, InputValue, Object,
+    ResolverContext, Schema as AsyncSchema, Subscription, SubscriptionField, SubscriptionFieldFuture,
     TypeRef,
 };
 use async_graphql::futures_util::StreamExt;
@@ -88,10 +88,7 @@ impl SchemaBuilder {
     }
 
     /// Override the entity resolver used for federation.
-    pub fn with_entity_resolver(
-        mut self,
-        resolver: std::sync::Arc<dyn EntityResolver>,
-    ) -> Self {
+    pub fn with_entity_resolver(mut self, resolver: std::sync::Arc<dyn EntityResolver>) -> Self {
         self.entity_resolver = Some(resolver);
         self
     }
@@ -225,63 +222,67 @@ impl SchemaBuilder {
 
         if self.federation {
             schema_builder = schema_builder.enable_federation();
-            // Register `_Any` scalar so federation directives/arguments are valid in dynamic schemas.
-            schema_builder = schema_builder.register(Scalar::new("_Any"));
-        }
 
-        // Provide entity resolver for federation, if enabled
-        if self.federation && federation_config.is_enabled() {
-            let config = federation_config.clone();
-            let entity_resolver = self
-                .entity_resolver
-                .clone()
-                .unwrap_or_else(|| std::sync::Arc::new(GrpcEntityResolver::new(client_pool.clone())));
-            schema_builder = schema_builder.entity_resolver(move |ctx| {
-                let config = config.clone();
-                let entity_resolver = entity_resolver.clone();
-                FieldFuture::new(async move {
-                    let representations = ctx
-                        .args
-                        .get("representations")
-                        .ok_or_else(|| async_graphql::Error::new("missing representations argument"))?
-                        .list()?;
+            if federation_config.is_enabled() {
+                let config = federation_config.clone();
+                let resolver = self.entity_resolver.clone().unwrap_or_else(|| {
+                    std::sync::Arc::new(GrpcEntityResolver::new(client_pool.clone()))
+                });
 
-                    let mut results = Vec::new();
-                    for repr in representations.iter() {
-                        let obj = repr.object()?;
-                        let mut representation_map = async_graphql::indexmap::IndexMap::new();
-                        for (key, value) in obj.iter() {
-                            representation_map.insert(key.clone(), value.as_value().clone());
-                        }
+                schema_builder = schema_builder.entity_resolver(move |ctx: ResolverContext<'_>| {
+                    let entity_resolvers = resolver.clone();
+                    let config = config.clone();
 
-                        let typename = representation_map
-                            .get(&Name::new("__typename"))
-                            .and_then(|v| match v {
-                                GqlValue::String(s) => Some(s.as_str()),
-                                _ => None,
-                            })
+                    FieldFuture::new(async move {
+                        let representations = ctx
+                            .args
+                            .get("representations")
                             .ok_or_else(|| {
-                                async_graphql::Error::new("missing __typename in representation")
+                                async_graphql::Error::new("missing representations argument")
+                            })?
+                            .list()?;
+
+                        let mut results = Vec::new();
+                        for repr in representations.iter() {
+                            let obj = repr.object()?;
+
+                            let mut representation_map = IndexMap::new();
+                            for (key, value) in obj.iter() {
+                                representation_map.insert(key.clone(), value.as_value().clone());
+                            }
+
+                            let typename = representation_map
+                                .get(&Name::new("__typename"))
+                                .and_then(|v| match v {
+                                    GqlValue::String(s) => Some(s.as_str()),
+                                    _ => None,
+                                })
+                                .ok_or_else(|| {
+                                    async_graphql::Error::new("missing __typename in representation")
+                                })?;
+
+                            let entity_config = config.entities.get(typename).ok_or_else(|| {
+                                async_graphql::Error::new(format!(
+                                    "unknown entity type: {}",
+                                    typename
+                                ))
                             })?;
 
-                        let entity_config = config.entities.get(typename).ok_or_else(|| {
-                            async_graphql::Error::new(format!("unknown entity type: {}", typename))
-                        })?;
+                            let entity = entity_resolvers
+                                .resolve_entity(entity_config, &representation_map)
+                                .await
+                                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
-                        let entity = entity_resolver
-                            .resolve_entity(entity_config, &representation_map)
-                            .await
-                            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+                            results.push(
+                                FieldValue::value(entity)
+                                    .with_type(entity_config.type_name.clone()),
+                            );
+                        }
 
-                        results.push(
-                            async_graphql::dynamic::FieldValue::value(entity)
-                                .with_type(entity_config.type_name.clone()),
-                        );
-                    }
-
-                    Ok(Some(async_graphql::dynamic::FieldValue::list(results)))
-                })
-            });
+                        Ok(Some(FieldValue::list(results)))
+                    })
+                });
+            }
         }
 
         schema_builder = schema_builder.register(query_root);
@@ -321,6 +322,44 @@ impl SchemaBuilder {
 impl Default for SchemaBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FEDERATION_DESCRIPTOR: &[u8] =
+        include_bytes!("generated/federation_example_descriptor.bin");
+
+    #[tokio::test]
+    async fn federation_adds_entities_query() {
+        let schema = SchemaBuilder::new()
+            .with_descriptor_set_bytes(FEDERATION_DESCRIPTOR)
+            .enable_federation()
+            .build(&GrpcClientPool::new())
+            .expect("schema builds");
+
+        let response = schema
+            .execute(async_graphql::Request::new(
+                "{ _entities(representations: []) { __typename } }",
+            ))
+            .await;
+
+        assert!(
+            response.errors.is_empty(),
+            "expected _entities field to exist, got errors: {:?}",
+            response.errors
+        );
+
+        let data = response.data.into_json().expect("valid JSON response");
+        let entities = data
+            .get("_entities")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        assert!(entities.is_empty(), "expected empty entities list");
     }
 }
 
@@ -808,9 +847,9 @@ fn field_is_omitted(field: &FieldDescriptor, field_ext: &ExtensionDescriptor) ->
 fn field_is_required(field: &FieldDescriptor, field_ext: &ExtensionDescriptor) -> bool {
     decode_extension::<GraphqlField>(&field.options(), field_ext)
         .ok()
-            .flatten()
-            .map(|f| f.required)
-            .unwrap_or(false)
+        .flatten()
+        .map(|f| f.required)
+        .unwrap_or(false)
 }
 
 fn graphql_field_name(field: &FieldDescriptor, field_ext: &ExtensionDescriptor) -> String {
@@ -860,7 +899,6 @@ fn field_provides(field: &FieldDescriptor, field_ext: &ExtensionDescriptor) -> O
             }
         })
 }
-
 
 fn compute_return_type(
     output_desc: &MessageDescriptor,

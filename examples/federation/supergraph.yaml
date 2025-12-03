@@ -1,0 +1,7 @@
+federation_version: 2
+subgraphs:
+  grpc_gateway:
+    routing_url: http://127.0.0.1:8890/graphql
+    schema:
+      # Introspect the gateway's federated GraphQL endpoint
+      subgraph_url: http://127.0.0.1:8890/graphql

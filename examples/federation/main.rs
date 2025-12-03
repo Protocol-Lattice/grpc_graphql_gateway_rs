@@ -26,6 +26,7 @@ const USER_GRPC_ADDR: &str = "127.0.0.1:50051";
 const PRODUCT_GRPC_ADDR: &str = "127.0.0.1:50052";
 const REVIEW_GRPC_ADDR: &str = "127.0.0.1:50053";
 const GATEWAY_ADDR: &str = "127.0.0.1:8890";
+const ROUTER_ADDR: &str = "127.0.0.1:4000";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -91,11 +92,12 @@ async fn run_review_service(services: FederationServices) -> Result<()> {
 
 async fn run_gateway(entity_resolver: Arc<dyn EntityResolver>) -> Result<()> {
     let user_client = GrpcClient::builder(format!("http://{USER_GRPC_ADDR}")).connect_lazy()?;
-    let product_client = GrpcClient::builder(format!("http://{PRODUCT_GRPC_ADDR}")).connect_lazy()?;
+    let product_client =
+        GrpcClient::builder(format!("http://{PRODUCT_GRPC_ADDR}")).connect_lazy()?;
     let review_client = GrpcClient::builder(format!("http://{REVIEW_GRPC_ADDR}")).connect_lazy()?;
 
     info!(
-        "Federated gateway listening on http://{}/graphql",
+        "Federated subgraph listening on http://{}/graphql",
         GATEWAY_ADDR
     );
 
@@ -104,10 +106,7 @@ async fn run_gateway(entity_resolver: Arc<dyn EntityResolver>) -> Result<()> {
         .enable_federation()
         .with_entity_resolver(entity_resolver)
         .add_grpc_clients([
-            (
-                "federation_example.UserService".to_string(),
-                user_client,
-            ),
+            ("federation_example.UserService".to_string(), user_client),
             (
                 "federation_example.ProductService".to_string(),
                 product_client,
@@ -272,10 +271,16 @@ impl FederationData {
 }
 
 fn print_examples() {
-    println!("Federated GraphQL endpoint: http://{}/graphql", GATEWAY_ADDR);
-    println!("Try these once the services are up:");
+    println!("Federated subgraph: http://{}/graphql", GATEWAY_ADDR);
+    println!(
+        "Apollo Router (after composing supergraph) default: http://{}/",
+        ROUTER_ADDR
+    );
+    println!("Try these once the services (and router) are up:");
     println!("  query {{ user(id:\"u1\") {{ id email name }} }}");
-    println!("  query {{ product(upc:\"apollo-1\") {{ upc name price createdBy {{ id name }} }} }}");
+    println!(
+        "  query {{ product(upc:\"apollo-1\") {{ upc name price createdBy {{ id name }} }} }}"
+    );
     println!("  query {{ userReviews(userId:\"u1\") {{ id rating body author {{ id name }} product {{ upc name }} }} }}");
     println!(
         "  query {{ _entities(representations:[{{ __typename:\"federation_example_User\", id:\"u1\" }}]) {{ ... on federation_example_User {{ id email name }} }} }}"
@@ -304,10 +309,7 @@ impl ExampleEntityResolver {
         let mut obj = async_graphql::indexmap::IndexMap::new();
         obj.insert(Name::new("upc"), GqlValue::String(product.upc.clone()));
         obj.insert(Name::new("name"), GqlValue::String(product.name.clone()));
-        obj.insert(
-            Name::new("price"),
-            GqlValue::Number(product.price.into()),
-        );
+        obj.insert(Name::new("price"), GqlValue::Number(product.price.into()));
 
         if let Some(author) = product.created_by.as_ref() {
             obj.insert(Name::new("createdBy"), Self::user_to_value(author));
@@ -320,10 +322,7 @@ impl ExampleEntityResolver {
         let mut obj = async_graphql::indexmap::IndexMap::new();
         obj.insert(Name::new("id"), GqlValue::String(review.id.clone()));
         obj.insert(Name::new("body"), GqlValue::String(review.body.clone()));
-        obj.insert(
-            Name::new("rating"),
-            GqlValue::Number(review.rating.into()),
-        );
+        obj.insert(Name::new("rating"), GqlValue::Number(review.rating.into()));
 
         if let Some(prod) = review.product.as_ref() {
             obj.insert(Name::new("product"), Self::product_to_value(prod));
@@ -360,10 +359,9 @@ impl EntityResolver for ExampleEntityResolver {
         match entity_config.type_name.as_str() {
             "federation_example_User" => {
                 let id = Self::required_str(representation, "id")?;
-                let user = data
-                    .users
-                    .get(id)
-                    .ok_or_else(|| grpc_graphql_gateway::Error::Schema(format!("user {id} not found")))?;
+                let user = data.users.get(id).ok_or_else(|| {
+                    grpc_graphql_gateway::Error::Schema(format!("user {id} not found"))
+                })?;
                 Ok(Self::user_to_value(user))
             }
             "federation_example_Product" => {
