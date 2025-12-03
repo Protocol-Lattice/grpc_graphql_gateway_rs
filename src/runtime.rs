@@ -8,7 +8,7 @@ use async_graphql_axum::{GraphQLRequest, GraphQLResponse, GraphQLSubscription};
 use axum::{
     extract::State,
     http::HeaderMap,
-    response::IntoResponse,
+    response::{Html, IntoResponse},
     routing::{get_service, post},
     Extension, Router,
 };
@@ -101,7 +101,10 @@ impl ServeMux {
         let subscription = GraphQLSubscription::new(state.schema.executor());
 
         Router::new()
-            .route("/graphql", post(handle_graphql_post))
+            .route(
+                "/graphql",
+                post(handle_graphql_post).get(graphql_playground),
+            )
             .route_service("/graphql/ws", get_service(subscription))
             .layer(Extension(state.schema.executor()))
             .with_state(state)
@@ -125,4 +128,12 @@ async fn handle_graphql_post(
     request: GraphQLRequest,
 ) -> impl IntoResponse {
     mux.handle_http(headers, request).await
+}
+
+/// Serve the GraphQL Playground UI for ad-hoc exploration.
+async fn graphql_playground() -> impl IntoResponse {
+    Html(async_graphql::http::playground_source(
+        async_graphql::http::GraphQLPlaygroundConfig::new("/graphql")
+            .subscription_endpoint("/graphql/ws"),
+    ))
 }

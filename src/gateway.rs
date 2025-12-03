@@ -111,8 +111,7 @@ impl GatewayBuilder {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        let set: std::collections::HashSet<String> =
-            services.into_iter().map(Into::into).collect();
+        let set: std::collections::HashSet<String> = services.into_iter().map(Into::into).collect();
         self.schema_builder = self.schema_builder.with_services(set.clone());
         self.service_allowlist = Some(set);
         self

@@ -10,8 +10,8 @@ use crate::graphql::{GraphqlField, GraphqlResponse, GraphqlSchema, GraphqlServic
 use crate::grpc_client::{GrpcClient, GrpcClientPool};
 use async_graphql::dynamic::{
     Enum, EnumItem, Field, FieldFuture, FieldValue, InputObject, InputValue, Object,
-    ResolverContext, Schema as AsyncSchema, Subscription, SubscriptionField, SubscriptionFieldFuture,
-    TypeRef,
+    ResolverContext, Schema as AsyncSchema, Subscription, SubscriptionField,
+    SubscriptionFieldFuture, TypeRef,
 };
 use async_graphql::futures_util::StreamExt;
 use async_graphql::indexmap::IndexMap;
@@ -276,7 +276,9 @@ impl SchemaBuilder {
                                     _ => None,
                                 })
                                 .ok_or_else(|| {
-                                    async_graphql::Error::new("missing __typename in representation")
+                                    async_graphql::Error::new(
+                                        "missing __typename in representation",
+                                    )
                                 })?;
 
                             let entity_config = config.entities.get(typename).ok_or_else(|| {

@@ -106,9 +106,7 @@ async fn run_user_gateway(entity_resolver: Arc<dyn EntityResolver>) -> Result<()
         .with_descriptor_set_bytes(DESCRIPTORS)
         .enable_federation()
         .with_entity_resolver(entity_resolver)
-        .add_grpc_clients([
-            ("federation_example.UserService".to_string(), user_client),
-        ])
+        .add_grpc_clients([("federation_example.UserService".to_string(), user_client)])
         .with_services(["federation_example.UserService"])
         .serve(USER_GRAPH_ADDR)
         .await?;
