@@ -1,4 +1,4 @@
-# grpc-graphql-gateway-rs
+# grpc_graphql_gateway
 
 Bridge your gRPC services to GraphQL. This crate builds an `async-graphql` schema directly from protobuf descriptors (including custom `(graphql.*)` options) and routes requests to your gRPC backends via `tonic`.
 
