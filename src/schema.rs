@@ -5,11 +5,13 @@
 //! resolvers proxy calls to the appropriate gRPC methods via `tonic`.
 
 use crate::error::{Error, Result};
+use crate::federation::{EntityResolver, FederationConfig, GrpcEntityResolver};
 use crate::graphql::{GraphqlField, GraphqlResponse, GraphqlSchema, GraphqlService, GraphqlType};
 use crate::grpc_client::{GrpcClient, GrpcClientPool};
 use async_graphql::dynamic::{
     Enum, EnumItem, Field, FieldFuture, InputObject, InputValue, Object, ResolverContext,
-    Schema as AsyncSchema, Subscription, SubscriptionField, SubscriptionFieldFuture, TypeRef,
+    Schema as AsyncSchema, Scalar, Subscription, SubscriptionField, SubscriptionFieldFuture,
+    TypeRef,
 };
 use async_graphql::futures_util::StreamExt;
 use async_graphql::indexmap::IndexMap;
@@ -52,6 +54,8 @@ impl DynamicSchema {
 /// Schema builder for GraphQL gateway
 pub struct SchemaBuilder {
     descriptor_bytes: Option<Vec<u8>>,
+    federation: bool,
+    entity_resolver: Option<std::sync::Arc<dyn EntityResolver>>,
 }
 
 impl SchemaBuilder {
@@ -59,6 +63,8 @@ impl SchemaBuilder {
     pub fn new() -> Self {
         Self {
             descriptor_bytes: None,
+            federation: false,
+            entity_resolver: None,
         }
     }
 
@@ -73,6 +79,21 @@ impl SchemaBuilder {
         let data = std::fs::read(path).map_err(Error::Io)?;
         self.descriptor_bytes = Some(data);
         Ok(self)
+    }
+
+    /// Enable GraphQL federation support (adds _service/_entities when types are annotated as entities).
+    pub fn enable_federation(mut self) -> Self {
+        self.federation = true;
+        self
+    }
+
+    /// Override the entity resolver used for federation.
+    pub fn with_entity_resolver(
+        mut self,
+        resolver: std::sync::Arc<dyn EntityResolver>,
+    ) -> Self {
+        self.entity_resolver = Some(resolver);
+        self
     }
 
     /// Build the GraphQL schema from the provided descriptor set.
@@ -93,6 +114,20 @@ impl SchemaBuilder {
         let field_ext = pool
             .get_extension_by_name("graphql.field")
             .ok_or_else(|| Error::Schema("missing graphql.field extension".into()))?;
+
+        // Load entity extension if federation is enabled
+        let entity_ext = if self.federation {
+            pool.get_extension_by_name("graphql.entity")
+        } else {
+            None
+        };
+
+        // Extract federation configuration
+        let federation_config = if let Some(entity_ext) = entity_ext.as_ref() {
+            FederationConfig::from_descriptor_pool(&pool, entity_ext)?
+        } else {
+            FederationConfig::new()
+        };
 
         let mut registry = TypeRegistry::default();
 
@@ -184,8 +219,70 @@ impl SchemaBuilder {
             query_root.type_name(),
             mutation_root.as_ref().map(Object::type_name),
             subscription_root.as_ref().map(Subscription::type_name),
-        )
-        .enable_uploading();
+        );
+
+        schema_builder = schema_builder.enable_uploading();
+
+        if self.federation {
+            schema_builder = schema_builder.enable_federation();
+            // Register `_Any` scalar so federation directives/arguments are valid in dynamic schemas.
+            schema_builder = schema_builder.register(Scalar::new("_Any"));
+        }
+
+        // Provide entity resolver for federation, if enabled
+        if self.federation && federation_config.is_enabled() {
+            let config = federation_config.clone();
+            let entity_resolver = self
+                .entity_resolver
+                .clone()
+                .unwrap_or_else(|| std::sync::Arc::new(GrpcEntityResolver::new(client_pool.clone())));
+            schema_builder = schema_builder.entity_resolver(move |ctx| {
+                let config = config.clone();
+                let entity_resolver = entity_resolver.clone();
+                FieldFuture::new(async move {
+                    let representations = ctx
+                        .args
+                        .get("representations")
+                        .ok_or_else(|| async_graphql::Error::new("missing representations argument"))?
+                        .list()?;
+
+                    let mut results = Vec::new();
+                    for repr in representations.iter() {
+                        let obj = repr.object()?;
+                        let mut representation_map = async_graphql::indexmap::IndexMap::new();
+                        for (key, value) in obj.iter() {
+                            representation_map.insert(key.clone(), value.as_value().clone());
+                        }
+
+                        let typename = representation_map
+                            .get(&Name::new("__typename"))
+                            .and_then(|v| match v {
+                                GqlValue::String(s) => Some(s.as_str()),
+                                _ => None,
+                            })
+                            .ok_or_else(|| {
+                                async_graphql::Error::new("missing __typename in representation")
+                            })?;
+
+                        let entity_config = config.entities.get(typename).ok_or_else(|| {
+                            async_graphql::Error::new(format!("unknown entity type: {}", typename))
+                        })?;
+
+                        let entity = entity_resolver
+                            .resolve_entity(entity_config, &representation_map)
+                            .await
+                            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+                        results.push(
+                            async_graphql::dynamic::FieldValue::value(entity)
+                                .with_type(entity_config.type_name.clone()),
+                        );
+                    }
+
+                    Ok(Some(async_graphql::dynamic::FieldValue::list(results)))
+                })
+            });
+        }
 
         schema_builder = schema_builder.register(query_root);
 
@@ -203,7 +300,13 @@ impl SchemaBuilder {
         for (_, input) in registry.input_objects {
             schema_builder = schema_builder.register(input);
         }
-        for (_, obj) in registry.objects {
+        for (type_name, obj) in registry.objects {
+            // Apply federation directives if enabled
+            let obj = if self.federation {
+                federation_config.apply_directives_to_object(obj, &type_name)?
+            } else {
+                obj
+            };
             schema_builder = schema_builder.register(obj);
         }
 
@@ -338,7 +441,7 @@ impl TypeRegistry {
             let field_name_for_value = field_name.clone();
             let field_ext_for_resolver = field_ext.clone();
 
-            obj = obj.field(Field::new(field_name, ty, move |ctx| {
+            let mut gql_field = Field::new(field_name.clone(), ty, move |ctx| {
                 let field_ext = field_ext_for_resolver.clone();
                 let field_desc = field_desc.clone();
                 let field_name_for_value = field_name_for_value.clone();
@@ -359,7 +462,26 @@ impl TypeRegistry {
 
                     Ok(Some(GqlValue::Null))
                 })
-            }));
+            });
+
+            // Apply federation field directives
+            if field_is_external(&field, &field_ext) {
+                gql_field = gql_field.directive(async_graphql::dynamic::Directive::new("external"));
+            }
+            if let Some(requires) = field_requires(&field, &field_ext) {
+                gql_field = gql_field.directive(
+                    async_graphql::dynamic::Directive::new("requires")
+                        .argument("fields", GqlValue::String(requires)),
+                );
+            }
+            if let Some(provides) = field_provides(&field, &field_ext) {
+                gql_field = gql_field.directive(
+                    async_graphql::dynamic::Directive::new("provides")
+                        .argument("fields", GqlValue::String(provides)),
+                );
+            }
+
+            obj = obj.field(gql_field);
         }
 
         self.objects.insert(name.clone(), obj);
@@ -686,9 +808,9 @@ fn field_is_omitted(field: &FieldDescriptor, field_ext: &ExtensionDescriptor) ->
 fn field_is_required(field: &FieldDescriptor, field_ext: &ExtensionDescriptor) -> bool {
     decode_extension::<GraphqlField>(&field.options(), field_ext)
         .ok()
-        .flatten()
-        .map(|f| f.required)
-        .unwrap_or(false)
+            .flatten()
+            .map(|f| f.required)
+            .unwrap_or(false)
 }
 
 fn graphql_field_name(field: &FieldDescriptor, field_ext: &ExtensionDescriptor) -> String {
@@ -704,6 +826,41 @@ fn graphql_field_name(field: &FieldDescriptor, field_ext: &ExtensionDescriptor) 
         })
         .unwrap_or_else(|| field.name().to_string())
 }
+
+fn field_is_external(field: &FieldDescriptor, field_ext: &ExtensionDescriptor) -> bool {
+    decode_extension::<GraphqlField>(&field.options(), field_ext)
+        .ok()
+        .flatten()
+        .map(|f| f.external)
+        .unwrap_or(false)
+}
+
+fn field_requires(field: &FieldDescriptor, field_ext: &ExtensionDescriptor) -> Option<String> {
+    decode_extension::<GraphqlField>(&field.options(), field_ext)
+        .ok()
+        .flatten()
+        .and_then(|f| {
+            if f.requires.is_empty() {
+                None
+            } else {
+                Some(f.requires)
+            }
+        })
+}
+
+fn field_provides(field: &FieldDescriptor, field_ext: &ExtensionDescriptor) -> Option<String> {
+    decode_extension::<GraphqlField>(&field.options(), field_ext)
+        .ok()
+        .flatten()
+        .and_then(|f| {
+            if f.provides.is_empty() {
+                None
+            } else {
+                Some(f.provides)
+            }
+        })
+}
+
 
 fn compute_return_type(
     output_desc: &MessageDescriptor,

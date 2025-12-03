@@ -1,0 +1,167 @@
+// Example proto file demonstrating GraphQL Federation support
+syntax = "proto3";
+
+package federation_example;
+
+import "graphql.proto";
+
+// User entity - primary service that defines the User type
+message User {
+  option (graphql.entity) = {
+    keys: "id"
+    resolvable: true
+  };
+
+  string id = 1 [(graphql.field) = { required: true }];
+  string email = 2;
+  string name = 3;
+}
+
+// Product entity - extends User from another service
+message Product {
+  option (graphql.entity) = {
+    keys: "upc"
+    resolvable: true
+  };
+
+  string upc = 1 [(graphql.field) = { required: true }];
+  string name = 2;
+  int32 price = 3;
+  
+  // Reference to User entity (this user created the product)
+  User created_by = 4 [(graphql.field) = { 
+    provides: "id email"
+  }];
+}
+
+// Review entity - extends both Product and User
+message Review {
+  option (graphql.entity) = {
+    keys: "id"
+    resolvable: true
+  };
+
+  string id = 1 [(graphql.field) = { required: true }];
+  
+  // External reference to Product
+  Product product = 2 [(graphql.field) = { 
+    external: true
+  }];
+  
+  // External reference to User (the reviewer)
+  User author = 3 [(graphql.field) = {
+    external: true
+  }];
+  
+  string body = 4;
+  int32 rating = 5;
+}
+
+// User service extending User entity from another service
+message UserExtension {
+  option (graphql.entity) = {
+    extend: true
+    keys: "id"
+  };
+
+  string id = 1 [(graphql.field) = { 
+    external: true
+    required: true 
+  }];
+  
+  // This service adds reviews to the User type
+  repeated Review reviews = 2 [(graphql.field) = {
+    requires: "id"
+  }];
+}
+
+// Request/Response messages for gRPC methods
+
+message GetUserRequest {
+  string id = 1;
+}
+
+message GetUserResponse {
+  User user = 1;
+}
+
+message GetProductRequest {
+  string upc = 1;
+}
+
+message GetProductResponse {
+  Product product = 1;
+}
+
+message GetReviewRequest {
+  string id = 1;
+}
+
+message GetReviewResponse {
+  Review review = 1;
+}
+
+message GetUserReviewsRequest {
+  string user_id = 1;
+}
+
+message GetUserReviewsResponse {
+  repeated Review reviews = 1;
+}
+
+// Service definitions with GraphQL schema options
+
+service UserService {
+  option (graphql.service) = {
+    host: "localhost:50051"
+    insecure: true
+  };
+
+  rpc GetUser(GetUserRequest) returns (GetUserResponse) {
+    option (graphql.schema) = {
+      type: QUERY
+      name: "user"
+      response { pluck: "user" }
+    };
+  }
+}
+
+service ProductService {
+  option (graphql.service) = {
+    host: "localhost:50052"
+    insecure: true
+  };
+
+  rpc GetProduct(GetProductRequest) returns (GetProductResponse) {
+    option (graphql.schema) = {
+      type: QUERY
+      name: "product"
+      response { pluck: "product" }
+    };
+  }
+}
+
+service ReviewService {
+  option (graphql.service) = {
+    host: "localhost:50053"
+    insecure: true
+  };
+
+  rpc GetReview(GetReviewRequest) returns (GetReviewResponse) {
+    option (graphql.schema) = {
+      type: QUERY
+      name: "review"
+      response { pluck: "review" }
+    };
+  }
+
+  rpc GetUserReviews(GetUserReviewsRequest) returns (GetUserReviewsResponse) {
+    option (graphql.schema) = {
+      type: QUERY
+      name: "userReviews"
+      response {
+        pluck: "reviews"
+      }
+    };
+  }
+}

@@ -71,9 +71,17 @@ doctest = false
 name = "greeter"
 path = "examples/greeter/main.rs"
 
+[[example]]
+name = "federation"
+path = "examples/federation/main.rs"
+
 [[bin]]
 name = "greeter"
 path = "examples/greeter/main.rs"
+
+[[bin]]
+name = "federation"
+path = "examples/federation/main.rs"
 
 [[bin]]
 name = "protoc-gen-graphql-template"
