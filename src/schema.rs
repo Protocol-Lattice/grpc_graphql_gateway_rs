@@ -34,6 +34,9 @@ use tonic::codegen::http;
 use tonic::Status;
 
 /// Dynamic schema wrapper
+///
+/// Wraps an `async-graphql` schema and provides execution capabilities.
+/// This is typically created by the [`SchemaBuilder`].
 #[derive(Clone)]
 pub struct DynamicSchema {
     inner: AsyncSchema,
@@ -52,6 +55,22 @@ impl DynamicSchema {
 }
 
 /// Schema builder for GraphQL gateway
+///
+/// Builds a [`DynamicSchema`] from protobuf descriptors.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use grpc_graphql_gateway::{SchemaBuilder, GrpcClientPool};
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let pool = GrpcClientPool::new();
+/// let schema = SchemaBuilder::new()
+///     .with_descriptor_set_file("path/to/descriptor.bin")?
+///     .build(&pool)?;
+/// # Ok(())
+/// # }
+/// ```
 pub struct SchemaBuilder {
     descriptor_bytes: Option<Vec<u8>>,
     federation: bool,
@@ -84,6 +103,8 @@ impl SchemaBuilder {
     }
 
     /// Enable GraphQL federation support (adds _service/_entities when types are annotated as entities).
+    ///
+    /// This enables Apollo Federation v2 support, allowing this gateway to act as a subgraph.
     pub fn enable_federation(mut self) -> Self {
         self.federation = true;
         self

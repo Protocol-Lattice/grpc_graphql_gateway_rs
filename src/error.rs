@@ -6,6 +6,9 @@ use thiserror::Error;
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Main error type for the gateway
+///
+/// This enum covers all possible errors that can occur within the gateway,
+/// including gRPC errors, schema errors, and runtime errors.
 #[derive(Error, Debug)]
 pub enum Error {
     /// gRPC transport errors

@@ -37,6 +37,25 @@ impl Context {
 }
 
 /// Middleware trait for processing requests
+///
+/// Middleware can intercept requests before they are processed by the GraphQL engine.
+///
+/// # Example
+///
+/// ```rust
+/// use grpc_graphql_gateway::middleware::{Middleware, Context};
+/// use grpc_graphql_gateway::Result;
+///
+/// struct MyMiddleware;
+///
+/// #[async_trait::async_trait]
+/// impl Middleware for MyMiddleware {
+///     async fn call(&self, ctx: &mut Context) -> Result<()> {
+///         println!("Processing request");
+///         Ok(())
+///     }
+/// }
+/// ```
 #[async_trait::async_trait]
 pub trait Middleware: Send + Sync {
     /// Process the request context
@@ -51,6 +70,10 @@ pub type MiddlewareFn =
     Arc<dyn Fn(&mut Context) -> Pin<Box<dyn Future<Output = Result<()>> + Send>> + Send + Sync>;
 
 /// CORS middleware
+///
+/// Handles Cross-Origin Resource Sharing (CORS) headers.
+/// Note: This is a placeholder implementation. In a real application,
+/// you should use `tower_http::cors::CorsLayer` with Axum.
 #[derive(Debug, Clone)]
 pub struct CorsMiddleware {
     pub allow_origins: Vec<String>,
@@ -77,6 +100,9 @@ impl Middleware for CorsMiddleware {
 }
 
 /// Authentication middleware
+///
+/// Validates the `Authorization` header using a provided validation function.
+/// If validation fails, it returns an `Unauthorized` error.
 #[derive(Clone)]
 pub struct AuthMiddleware {
     pub validate: Arc<dyn Fn(&str) -> bool + Send + Sync>,
@@ -99,6 +125,8 @@ impl Middleware for AuthMiddleware {
 }
 
 /// Logging middleware
+///
+/// Logs incoming GraphQL requests using the `tracing` crate.
 #[derive(Debug, Clone, Default)]
 pub struct LoggingMiddleware;
 

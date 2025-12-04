@@ -63,6 +63,9 @@ pub enum SchemaType {
 }
 
 /// Configuration for a GraphQL field from gRPC method
+///
+/// This struct holds the metadata extracted from the protobuf options
+/// (`graphql.schema`) for a specific gRPC method.
 #[derive(Debug, Clone)]
 pub struct FieldConfig {
     /// Field name in GraphQL schema
@@ -85,6 +88,8 @@ pub struct FieldConfig {
 }
 
 /// gRPC service configuration
+///
+/// Represents a configured gRPC service that the gateway connects to.
 #[derive(Debug, Clone)]
 pub struct ServiceConfig {
     /// Service name

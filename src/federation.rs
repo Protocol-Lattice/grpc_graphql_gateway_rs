@@ -192,6 +192,20 @@ impl Default for FederationConfig {
 }
 
 /// Configuration for mapping an entity type to its resolver method
+///
+/// This tells the gateway which gRPC method to call to resolve a specific entity type.
+///
+/// # Example
+///
+/// ```rust
+/// use grpc_graphql_gateway::EntityResolverMapping;
+///
+/// let mapping = EntityResolverMapping {
+///     service_name: "user.UserService".to_string(),
+///     method_name: "GetUser".to_string(),
+///     key_field: "id".to_string(),
+/// };
+/// ```
 #[derive(Clone, Debug)]
 pub struct EntityResolverMapping {
     /// Service name (e.g., "user.UserService")
@@ -205,7 +219,9 @@ pub struct EntityResolverMapping {
 /// Trait for resolving federated entities
 ///
 /// Implementors should resolve entities based on their representation
-/// (which contains the key fields and __typename)
+/// (which contains the key fields and __typename).
+///
+/// This trait supports both single and batch resolution.
 #[async_trait::async_trait]
 pub trait EntityResolver: Send + Sync {
     /// Resolve an entity from its representation

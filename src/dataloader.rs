@@ -23,9 +23,13 @@ struct BatchRequest {
 /// This prevents N+1 query problems by batching multiple entity resolution
 /// requests for the same entity type into a single batch operation.
 ///
+/// It works by collecting concurrent load requests and dispatching them
+/// to the [`EntityResolver::batch_resolve_entities`] method.
+///
 /// # Example
+///
 /// ```ignore
-/// let loader = EntityDataLoader::new(resolver);
+/// let loader = EntityDataLoader::new(resolver, entity_configs);
 /// 
 /// // These will be batched together
 /// let user1 = loader.load("User", repr1).await?;

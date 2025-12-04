@@ -15,6 +15,9 @@ use axum::{
 use std::sync::Arc;
 
 /// ServeMux - main gateway handler
+///
+/// The `ServeMux` handles the routing of GraphQL requests, executing middlewares,
+/// and invoking the dynamic schema. It can be converted into an Axum router.
 pub struct ServeMux {
     schema: DynamicSchema,
     middlewares: Vec<Arc<dyn Middleware>>,
@@ -31,7 +34,9 @@ impl ServeMux {
         }
     }
 
-    /// Add middleware
+    /// Add middleware to the execution pipeline
+    ///
+    /// Middlewares are executed in the order they are added.
     pub fn add_middleware(&mut self, middleware: Arc<dyn Middleware>) {
         self.middlewares.push(middleware);
     }
@@ -77,6 +82,12 @@ impl ServeMux {
     }
 
     /// Handle GraphQL HTTP request
+    ///
+    /// This method executes the request pipeline:
+    /// 1. Creates a context from headers
+    /// 2. Runs all middlewares
+    /// 3. Executes the GraphQL query against the schema
+    /// 4. Handles any errors
     pub async fn handle_http(
         &self,
         headers: HeaderMap,

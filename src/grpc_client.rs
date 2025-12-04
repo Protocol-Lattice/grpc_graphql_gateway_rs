@@ -5,6 +5,24 @@ use std::sync::Arc;
 use tonic::transport::{Channel, Endpoint};
 
 /// gRPC client connection manager
+///
+/// Manages a connection to a gRPC service, handling channel creation and configuration.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use grpc_graphql_gateway::GrpcClient;
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Connect immediately
+/// let client = GrpcClient::new("http://localhost:50051").await?;
+///
+/// // Or lazy connect
+/// let lazy_client = GrpcClient::builder("http://localhost:50051")
+///     .connect_lazy()?;
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone)]
 pub struct GrpcClient {
     /// Service endpoint URL
@@ -19,6 +37,8 @@ pub struct GrpcClient {
 
 impl GrpcClient {
     /// Start building a gRPC client with custom connection behavior.
+    ///
+    /// Returns a [`GrpcClientBuilder`] for configuration.
     pub fn builder(endpoint: impl Into<String>) -> GrpcClientBuilder {
         GrpcClientBuilder::new(endpoint)
     }
@@ -34,6 +54,8 @@ impl GrpcClient {
     }
 
     /// Create a new client without awaiting the connection (lazy connect on first use)
+    ///
+    /// This is useful when the service might not be up yet when the gateway starts.
     pub fn connect_lazy(endpoint: impl Into<String>, insecure: bool) -> Result<Self> {
         Self::builder(endpoint)
             .insecure(insecure)
