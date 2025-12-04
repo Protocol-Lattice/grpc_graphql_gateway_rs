@@ -1,16 +1,39 @@
-# grpc_graphql_gateway
+# grpc-graphql-gateway
 
-Bridge your gRPC services to GraphQL. This crate builds an `async-graphql` schema directly from protobuf descriptors (including custom `(graphql.*)` options) and routes requests to your gRPC backends via `tonic`.
+**A high-performance Rust gateway that bridges gRPC services to GraphQL with full Apollo Federation v2 support.**
 
-## Highlights
-- GraphQL **queries**, **mutations**, and **subscriptions** from gRPC methods (unary + server streaming)
-- Dynamic schema generation from descriptor sets; optional pluck/rename/omit field directives
-- Lazy or eager TLS/plain gRPC clients via a small builder API
-- Axum HTTP + WebSocket (graphql-ws) integration out of the box
-- Middleware and error-hook support for auth/logging/observability
-- `protoc-gen-graphql-template` helper that emits a starter gateway file and prints example operations
+[![Crates.io](https://img.shields.io/crates/v/grpc-graphql-gateway.svg)](https://crates.io/crates/grpc-graphql-gateway)
+[![Documentation](https://docs.rs/grpc-graphql-gateway/badge.svg)](https://docs.rs/grpc-graphql-gateway)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-## Install
+Transform your gRPC microservices into a unified GraphQL API with zero GraphQL code. This gateway dynamically generates GraphQL schemas from protobuf descriptors and routes requests to your gRPC backends via Tonic, providing a seamless bridge between gRPC and GraphQL ecosystems.
+
+## ✨ Features
+
+### Core Capabilities
+- 🚀 **Dynamic Schema Generation** - Automatic GraphQL schema from protobuf descriptors
+- ⚡ **Full Operation Support** - Queries, Mutations, and Subscriptions
+- 🔌 **WebSocket Subscriptions** - Real-time data via GraphQL subscriptions (`graphql-ws` protocol)
+- 📤 **File Uploads** - Multipart form data support for file uploads
+- 🎯 **Type Safety** - Leverages Rust's type system for robust schema generation
+
+### Federation & Enterprise
+- 🌐 **Apollo Federation v2** - Complete federation support with entity resolution
+- 🔄 **Entity Resolution** - Production-ready resolver with DataLoader batching
+- 🚫 **No N+1 Queries** - Built-in DataLoader prevents performance issues
+- 🔗 **All Federation Directives** - `@key`, `@external`, `@requires`, `@provides`, `@shareable`
+- 📊 **Batch Operations** - Efficient entity resolution with automatic batching
+
+### Developer Experience
+- 🛠️ **Code Generation** - `protoc-gen-graphql-template` generates starter gateway code
+- 🔧 **Middleware Support** - Extensible middleware for auth, logging, and observability
+- 📝 **Rich Examples** - Complete working examples for all features
+- 🧪 **Well Tested** - Comprehensive test coverage
+
+## 🚀 Quick Start
+
+### Installation
+
 ```toml
 [dependencies]
 grpc-graphql-gateway = "0.1"
@@ -18,373 +41,499 @@ tokio = { version = "1", features = ["full"] }
 tonic = "0.12"
 ```
 
-## Generate descriptors
-Use `tonic-build` (already wired in `build.rs`) to emit `graphql_descriptor.bin`:
-```rust
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("cargo:rerun-if-changed=proto/graphql.proto");
-    let out_dir = std::env::var("OUT_DIR")?;
-    let proto_include = std::env::var("PROTOC_INCLUDE").unwrap_or_else(|_| "/usr/local/include".to_string());
+### Basic Gateway
 
-    tonic_build::configure()
-        .build_server(false)
-        .build_client(false)
-        .file_descriptor_set_path(std::path::PathBuf::from(&out_dir).join("graphql_descriptor.bin"))
-        .compile_protos(&["proto/graphql.proto"], &["proto", &proto_include])?;
-    Ok(())
-}
-```
-
-## Quick start
 ```rust
-use grpc_graphql_gateway::{Gateway, GrpcClient, Result};
+use grpc_graphql_gateway::{Gateway, GrpcClient};
 
 const DESCRIPTORS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/graphql_descriptor.bin"));
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    let builder = Gateway::builder()
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let gateway = Gateway::builder()
         .with_descriptor_set_bytes(DESCRIPTORS)
         .add_grpc_client(
             "greeter.Greeter",
-            GrpcClient::builder("http://127.0.0.1:50051").lazy(true).connect_lazy()?,
-        );
+            GrpcClient::builder("http://127.0.0.1:50051").connect_lazy()?,
+        )
+        .build()?;
 
-    builder.serve("0.0.0.0:8888").await
+    gateway.serve("0.0.0.0:8888").await?;
+    Ok(())
 }
 ```
-- HTTP GraphQL endpoint: `POST /graphql`
-- WebSocket subscriptions: `GET /graphql/ws` (graphql-ws)
 
-### Built-in greeter example
-The repository ships a runnable greeter service defined in `proto/greeter.proto` that exercises queries, mutations, subscriptions, and a resolver. Run both the gRPC backend and the GraphQL gateway (this is the default `cargo run` target):
+**Your gateway is now running!**
+- GraphQL HTTP: `http://localhost:8888/graphql`
+- GraphQL WebSocket: `ws://localhost:8888/graphql/ws`
+
+### Generate Descriptors
+
+Add to your `build.rs`:
+
+```rust
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let out_dir = std::env::var("OUT_DIR")?;
+    
+    tonic_build::configure()
+        .build_server(false)
+        .build_client(false)
+        .file_descriptor_set_path(
+            std::path::PathBuf::from(&out_dir).join("graphql_descriptor.bin")
+        )
+        .compile_protos(&["proto/your_service.proto"], &["proto"])?;
+    
+    Ok(())
+}
+```
+
+## 📖 Usage Examples
+
+### Queries, Mutations & Subscriptions
+
+Annotate your proto file with GraphQL directives:
+
+```protobuf
+service UserService {
+  option (graphql.service) = {
+    host: "localhost:50051"
+    insecure: true
+  };
+
+  // Query
+  rpc GetUser(GetUserRequest) returns (User) {
+    option (graphql.schema) = {
+      type: QUERY
+      name: "user"
+    };
+  }
+
+  // Mutation
+  rpc CreateUser(CreateUserRequest) returns (User) {
+    option (graphql.schema) = {
+      type: MUTATION
+      name: "createUser"
+      request { name: "input" }
+    };
+  }
+
+  // Subscription (server streaming)
+  rpc WatchUser(WatchUserRequest) returns (stream User) {
+    option (graphql.schema) = {
+      type: SUBSCRIPTION
+      name: "userUpdates"
+    };
+  }
+}
+```
+
+**GraphQL operations:**
+```graphql
+# Query
+query {
+  user(id: "123") {
+    id
+    name
+    email
+  }
+}
+
+# Mutation
+mutation {
+  createUser(input: { name: "Alice", email: "alice@example.com" }) {
+    id
+    name
+  }
+}
+
+# Subscription
+subscription {
+  userUpdates(id: "123") {
+    id
+    name
+    status
+  }
+}
+```
+
+### File Uploads
+
+The gateway automatically supports GraphQL file uploads via multipart requests:
+
+```protobuf
+message UploadAvatarRequest {
+  string user_id = 1;
+  bytes avatar = 2;  // Maps to Upload scalar in GraphQL
+}
+```
+
 ```bash
-cargo run            # or: cargo run --bin greeter
-```
-gRPC listens on `127.0.0.1:50051`, and GraphQL (HTTP + websocket) is at `http://127.0.0.1:8888/graphql` (`ws://127.0.0.1:8888/graphql/ws` for subscriptions).
-
-Sample operations you can paste into GraphiQL or curl:
-```graphql
-query { hello(name: "GraphQL") { message meta { correlationId from { id displayName trusted } } } }
-mutation { updateGreeting(input: { name: "GraphQL", salutation: "Howdy" }) { message } }
-subscription { streamHello(name: "GraphQL") { message meta { correlationId } } }
-query { user(id: "demo") { id displayName trusted } }
+curl http://localhost:8888/graphql \
+  --form 'operations={"query": "mutation($file: Upload!) { uploadAvatar(input:{userId:\"123\", avatar:$file}) { userId size } }", "variables": {"file": null}}' \
+  --form 'map={"0": ["variables.file"]}' \
+  --form '0=@avatar.png'
 ```
 
-Upload mutation (uses the GraphQL `Upload` scalar; send as multipart):
-```graphql
-mutation ($file: Upload!) {
-  uploadAvatar(input: { userId: "demo", avatar: $file }) { userId size }
+### Field-Level Control
+
+```protobuf
+message User {
+  string id = 1 [(graphql.field) = { required: true }];
+  string email = 2 [(graphql.field) = { name: "emailAddress" }];
+  string internal_id = 3 [(graphql.field) = { omit: true }];
+  string password_hash = 4 [(graphql.field) = { omit: true }];
 }
 ```
-```
-curl http://127.0.0.1:8888/graphql \
-  --form 'operations={ "query": "mutation ($file: Upload!) { uploadAvatar(input:{ userId:\"demo\", avatar:$file }) { userId size } }", "variables": { "file": null } }' \
-  --form 'map={ "0": ["variables.file"] }' \
-  --form '0=@./proto/greeter.proto;type=application/octet-stream'
-```
 
-Multi-upload mutation (list of `Upload`):
-```graphql
-mutation ($files: [Upload!]!) {
-  uploadAvatars(input: { userId: "demo", avatars: $files }) { userId sizes }
+## 🌐 Apollo Federation v2
+
+Build federated GraphQL architectures with multiple subgraphs.
+
+### Defining Entities
+
+```protobuf
+message User {
+  option (graphql.entity) = {
+    keys: "id"
+    resolvable: true
+  };
+  
+  string id = 1 [(graphql.field) = { required: true }];
+  string email = 2 [(graphql.field) = { shareable: true }];
+  string name = 3 [(graphql.field) = { shareable: true }];
+}
+
+message Product {
+  option (graphql.entity) = {
+    keys: "upc"
+    resolvable: true
+  };
+  
+  string upc = 1 [(graphql.field) = { required: true }];
+  string name = 2 [(graphql.field) = { shareable: true }];
+  int32 price = 3 [(graphql.field) = { shareable: true }];
+  User created_by = 4 [(graphql.field) = { 
+    name: "createdBy"
+    shareable: true 
+  }];
 }
 ```
-```
-curl http://127.0.0.1:8888/graphql \
-  --form 'operations={ "query": "mutation ($files: [Upload!]!) { uploadAvatars(input:{ userId:\"demo\", avatars:$files }) { userId sizes } }", "variables": { "files": [null, null] } }' \
-  --form 'map={ "0": ["variables.files.0"], "1": ["variables.files.1"] }' \
-  --form '0=@./proto/greeter.proto;type=application/octet-stream' \
-  --form '1=@./README.md;type=text/plain'
-```
 
-## How it fits together
-A quick view of how protobuf descriptors, the generated schema, and gRPC clients are wired to serve GraphQL over HTTP and WebSocket:
-```mermaid
-flowchart LR
-  subgraph Client["GraphQL clients"]
-    http["HTTP POST /graphql"]
-    ws["WebSocket /graphql/ws"]
-  end
+### Entity Resolution with DataLoader
 
-  subgraph Gateway["grpc-graphql-gateway"]
-    desc["Descriptor set\n(graphql_descriptor.bin)"]
-    schema["SchemaBuilder\nasync-graphql schema"]
-    mux["ServeMux\nAxum routes + middlewares\n(optional error hooks)"]
-    pool["GrpcClient pool\n(lazy/eager, TLS/plain)"]
-  end
+The gateway includes production-ready entity resolution with automatic batching:
 
-  subgraph Services["Your gRPC backends"]
-    svc1["Service 1"]
-    svc2["Service N"]
-  end
+```rust
+use grpc_graphql_gateway::{
+    Gateway, GrpcClient, EntityResolverMapping, GrpcEntityResolver
+};
 
-  http --> mux
-  ws --> mux
-  desc --> schema
-  pool --> schema
-  schema --> mux
-  mux --> pool
-  pool --> svc1
-  pool --> svc2
+// Configure entity resolver with DataLoader batching
+let resolver = GrpcEntityResolver::builder(client_pool)
+    .register_entity_resolver(
+        "User",
+        EntityResolverMapping {
+            service_name: "UserService".to_string(),
+            method_name: "GetUser".to_string(),
+            key_field: "id".to_string(),
+        }
+    )
+    .build();
+
+let gateway = Gateway::builder()
+    .with_descriptor_set_bytes(DESCRIPTORS)
+    .enable_federation()
+    .with_entity_resolver(Arc::new(resolver))
+    .add_grpc_client("UserService", user_client)
+    .serve("0.0.0.0:8891")
+    .await?;
 ```
 
-## Proto annotations (from `proto/graphql.proto`)
-- Service defaults:
-  ```proto
-  service Greeter {
-    option (graphql.service) = { host: "127.0.0.1:50051", insecure: true };
-    rpc SayHello(HelloRequest) returns (HelloReply) {
-      option (graphql.schema) = { type: QUERY, name: "hello" };
+**Benefits:**
+- ✅ **No N+1 Queries** - DataLoader batches concurrent entity requests
+- ✅ **Automatic Batching** - Multiple entities resolved in single operation
+- ✅ **Production Ready** - Comprehensive error handling and logging
+
+### Extending Entities
+
+```protobuf
+message UserReviews {
+  option (graphql.entity) = {
+    extend: true
+    keys: "id"
+  };
+  
+  string id = 1 [(graphql.field) = {
+    external: true
+    required: true
+  }];
+  
+  repeated Review reviews = 2 [(graphql.field) = {
+    requires: "id"
+  }];
+}
+```
+
+### Federation Directives
+
+| Directive | Purpose | Example |
+|-----------|---------|---------|
+| `@key` | Define entity key fields | `keys: "id"` |
+| `@shareable` | Field resolvable from multiple subgraphs | `shareable: true` |
+| `@external` | Field defined in another subgraph | `external: true` |
+| `@requires` | Fields needed from other subgraphs | `requires: "id email"` |
+| `@provides` | Fields this resolver provides | `provides: "id name"` |
+
+### Running with Apollo Router
+
+```bash
+# Start your federation subgraphs
+cargo run --bin federation
+
+# Compose the supergraph
+./examples/federation/compose_supergraph.sh
+
+# Run Apollo Router
+router --supergraph examples/federation/supergraph.graphql --dev
+```
+
+**Query the federated graph:**
+```graphql
+query {
+  product(upc: "123") {
+    upc
+    name
+    price
+    createdBy {
+      id
+      name
+      email  # Resolved from User subgraph!
     }
   }
-  ```
-- Method options (`graphql.schema`):
-  - `type`: QUERY | MUTATION | SUBSCRIPTION | RESOLVER
-  - `name`: override GraphQL field name
-  - `request.name`: wrap input as a single argument
-  - `response.pluck`: expose a nested field instead of the whole message
-  - `response.required`: mark return type non-null
-- Field options (`graphql.field`):
-  - `required`: non-null in GraphQL
-  - `name`: rename field
-  - `omit`: skip field entirely
+}
+```
 
-## Using the template generator
-`protoc-gen-graphql-template` emits a ready-to-run `graphql_gateway.rs` that wires clients, logs discovered operations, and prints example queries/mutations/subscriptions.
+## 🔧 Advanced Features
+
+### Middleware
+
+```rust
+use grpc_graphql_gateway::middleware::{Middleware, Context};
+
+struct AuthMiddleware;
+
+#[async_trait::async_trait]
+impl Middleware for AuthMiddleware {
+    async fn call(
+        &self,
+        ctx: &mut Context,
+        next: Box<dyn Fn(&mut Context) -> BoxFuture<'_, Result<()>>>,
+    ) -> Result<()> {
+        // Validate auth token
+        let token = ctx.headers().get("authorization")
+            .ok_or_else(|| Error::Unauthorized)?;
+        
+        // Add user info to context
+        ctx.extensions_mut().insert(UserInfo { /* ... */ });
+        
+        next(ctx).await
+    }
+}
+
+let gateway = Gateway::builder()
+    .add_middleware(AuthMiddleware)
+    .build()?;
+```
+
+### Custom Error Handling
+
+```rust
+let gateway = Gateway::builder()
+    .with_error_handler(|error| {
+        // Log errors, send to monitoring, etc.
+        tracing::error!("GraphQL Error: {}", error);
+        error
+    })
+    .build()?;
+```
+
+### Response Plucking
+
+Extract nested fields as top-level responses:
+
+```protobuf
+message ListUsersResponse {
+  repeated User users = 1;
+  int32 total = 2;
+}
+
+rpc ListUsers(ListUsersRequest) returns (ListUsersResponse) {
+  option (graphql.schema) = {
+    type: QUERY
+    name: "users"
+    response {
+      pluck: "users"  // Returns [User] instead of ListUsersResponse
+    }
+  };
+}
+```
+
+## 📊 Type Mapping
+
+| Protobuf | GraphQL |
+|----------|---------|
+| `string` | `String` |
+| `bool` | `Boolean` |
+| `int32`, `uint32` | `Int` |
+| `int64`, `uint64` | `String` (avoids precision loss) |
+| `float`, `double` | `Float` |
+| `bytes` | `Upload` (input) / `String` (output, base64) |
+| `repeated T` | `[T]` |
+| `message` | `Object` / `InputObject` |
+| `enum` | `Enum` |
+
+## 🛠️ Code Generation
+
+Generate a starter gateway:
+
 ```bash
+# Build the generator
+cargo build --bin protoc-gen-graphql-template
+
+# Generate gateway code
 protoc \
   --plugin=protoc-gen-graphql-template=target/debug/protoc-gen-graphql-template \
   --graphql-template_out=. \
   --proto_path=proto \
   your_service.proto
-```
-Open the generated file, point endpoints at your services, and run it.
 
-### Example: Greeter
+# Run the generated gateway
+cargo run --bin graphql_gateway
+```
+
+The generator creates:
+- Complete gateway implementation
+- Example queries/mutations/subscriptions
+- Service configuration
+- Ready-to-run code
+
+## 📚 Examples
+
+### Greeter Example
+
+Basic query, mutation, subscription, and file upload:
+
 ```bash
-cargo build --bin protoc-gen-graphql-template
-
-protoc \
-  --plugin=protoc-gen-graphql-template=target/debug/protoc-gen-graphql-template \
-  --graphql-template_out=./generated \
-  --proto_path=proto \
-  proto/greeter.proto
-
-rustc ./generated/graphql_gateway.rs -L target/debug/deps
-./graphql_gateway
-```
-The generated gateway will log which queries/mutations/subscriptions it found and print example GraphQL operations such as:
-```
-Example queries:
-  query { hello }
-Example mutations:
-  mutation { createUser }
-Example subscriptions:
-  subscription { streamHello }
+cargo run --bin greeter
 ```
 
-## Middleware and error hooks
-Attach middlewares and inspect errors:
-```rust
-use grpc_graphql_gateway::{Gateway, GrpcClient};
-use grpc_graphql_gateway::middleware::LoggingMiddleware;
-
-let builder = Gateway::builder()
-    .with_descriptor_set_bytes(DESCRIPTORS)
-    .add_grpc_client("service", GrpcClient::builder("http://localhost:50051").connect_lazy()?)
-    .add_middleware(LoggingMiddleware);
-```
-`GatewayBuilder::with_error_handler` lets you capture `GraphQLError`s before responses are returned.
-
-## Type mapping (protobuf -> GraphQL)
-- `string` -> `String`
-- `bool` -> `Boolean`
-- `int32`/`uint32` -> `Int`
-- `int64`/`uint64` -> `String` (to avoid precision loss)
-- `float`/`double` -> `Float`
-- `bytes` -> `Upload` (inputs via multipart) / `String` (base64 responses)
-- `repeated` -> `[T]`
-- `message` -> `Object` / `InputObject`
-- `enum` -> `Enum`
-
-`Upload` inputs follow the GraphQL multipart request spec and are valid on mutations.
-
-## GraphQL Federation
-
-This gateway supports [Apollo Federation v2](https://www.apollographql.com/docs/federation/), enabling you to compose multiple GraphQL services into a unified supergraph.
-
-### Enabling Federation
-
-Enable federation support when building your gateway:
-
-```rust
-let gateway = Gateway::builder()
-    .with_descriptor_set_bytes(DESCRIPTORS)
-    .enable_federation()  // Enable federation support
-    .add_grpc_client("service", client)
-    .build()?;
+Open `http://localhost:8888/graphql` and try:
+```graphql
+query { hello(name: "World") { message } }
+mutation { updateGreeting(input: {name: "GraphQL", salutation: "Hey"}) { message } }
+subscription { streamHello(name: "Stream") { message } }
 ```
 
-### Defining Entities
+### Federation Example
 
-Mark protobuf messages as federated entities using the `graphql.entity` option:
+Complete federated microservices with entity resolution:
 
-```protobuf
-message User {
-  option (graphql.entity) = {
-    keys: "id"              // Primary key field
-    resolvable: true        // This service can resolve this entity
-  };
-  
-  string id = 1 [(graphql.field) = { required: true }];
-  string email = 2;
-  string name = 3;
-}
+```bash
+cargo run --bin federation
 ```
 
-**Multiple Keys**: Support composite keys and multiple key definitions:
-```protobuf
-message Product {
-  option (graphql.entity) = {
-    keys: "upc"           // Single field key
-    keys: "sku type"      // Composite key (multiple fields)
-  };
-  
-  string upc = 1;
-  string sku = 2;
-  string type = 3;
-}
+Demonstrates:
+- 3 federated subgraphs (User, Product, Review)
+- Entity resolution with DataLoader batching
+- Cross-subgraph queries
+- `@shareable` fields
+- Entity extensions
+
+## 🎯 Best Practices
+
+### Federation
+
+1. **Define Clear Boundaries** - Each subgraph owns its entities
+2. **Use @shareable Wisely** - Mark fields resolved by multiple subgraphs
+3. **Leverage DataLoader** - Prevent N+1 queries with batch resolution
+4. **Composite Keys** - Use when entities need multiple identifiers
+5. **Minimize @requires** - Only specify truly required fields
+
+### Performance
+
+1. **Enable Connection Pooling** - Reuse gRPC connections
+2. **Use Lazy Connections** - Connect on first use
+3. **Implement Caching** - Cache frequently accessed entities
+4. **Batch Operations** - Use DataLoader for entity resolution
+5. **Monitor Metrics** - Track query performance and batch sizes
+
+### Security
+
+1. **Validate Inputs** - Use field-level validation
+2. **Omit Sensitive Fields** - Use `omit: true` for internal data
+3. **Implement Auth Middleware** - Centralize authentication
+4. **Rate Limiting** - Protect against abuse
+5. **TLS/SSL** - Secure gRPC connections in production
+
+## 🧪 Testing
+
+```bash
+# Run all tests
+cargo test
+
+# Run with logging
+RUST_LOG=debug cargo test
+
+# Run specific test
+cargo test test_federation_config
 ```
 
-### Extending Entities
+## 📦 Project Structure
 
-Extend entities from other services using `extend: true`:
-
-```protobuf
-message UserExtension {
-  option (graphql.entity) = {
-    extend: true          // This extends User from another service
-    keys: "id"
-  };
-  
-  string id = 1 [(graphql.field) = { 
-    external: true        // This field is defined in another service
-    required: true 
-  }];
-  
-  repeated Review reviews = 2 [(graphql.field) = {
-    requires: "id"        // This field requires `id` from the base entity
-  }];
-}
+```
+grpc-graphql-gateway-rs/
+├── src/
+│   ├── lib.rs              # Public API
+│   ├── gateway.rs          # Gateway implementation
+│   ├── schema.rs           # Schema builder
+│   ├── federation.rs       # Federation support
+│   ├── dataloader.rs       # DataLoader for batching
+│   ├── grpc_client.rs      # gRPC client management
+│   ├── middleware.rs       # Middleware system
+│   └── runtime.rs          # HTTP/WebSocket server
+├── proto/
+│   ├── graphql.proto       # GraphQL annotations
+│   └── *.proto            # Your service definitions
+├── examples/
+│   ├── greeter/           # Basic example
+│   └── federation/        # Federation example
+└── tests/                 # Integration tests
 ```
 
-### Field-Level Federation Directives
+## 🤝 Contributing
 
-#### `@external`
-Mark fields that are defined in another service:
-```protobuf
-string user_id = 1 [(graphql.field) = { external: true }];
-```
+Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
 
-#### `@requires`
-Specify fields needed from other services to resolve this field:
-```protobuf
-int32 total_reviews = 2 [(graphql.field) = { requires: "id email" }];
-```
+## 📄 License
 
-#### `@provides`
-Indicate which fields this field provides to the supergraph:
-```protobuf
-User author = 3 [(graphql.field) = { provides: "id name" }];
-```
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-#### `@shareable`
-Mark fields that can be resolved from multiple subgraphs (Federation v2 requirement):
-```protobuf
-string email = 2 [(graphql.field) = { shareable: true }];
-string name = 3 [(graphql.field) = { shareable: true }];
-```
-**Note**: In Apollo Federation v2, fields that appear in multiple subgraphs must be marked as `@shareable`, otherwise the supergraph composition will fail.
+## 🙏 Acknowledgments
 
-### Entity Resolution
+- Inspired by [grpc-graphql-gateway](https://github.com/ysugimoto/grpc-graphql-gateway) (Go)
+- Built with [async-graphql](https://github.com/async-graphql/async-graphql)
+- Powered by [tonic](https://github.com/hyperium/tonic)
+- Federation based on [Apollo Federation v2](https://www.apollographql.com/docs/federation/)
 
-When federation is enabled and entities are defined, the gateway automatically exposes the `_entities` query for entity resolution. The current implementation returns entity representations as-is; for production use, implement a custom `EntityResolver`:
+## 🔗 Links
 
-```rust
-use grpc_graphql_gateway::{EntityResolver, FederationConfig};
+- [Documentation](https://docs.rs/grpc-graphql-gateway)
+- [Crates.io](https://crates.io/crates/grpc-graphql-gateway)
+- [Repository](https://github.com/Protocol-Lattice/grpc_graphql_gateway)
+- [Examples](https://github.com/Protocol-Lattice/grpc_graphql_gateway/tree/main/examples)
+- [Federation Guide](FEDERATION.md)
+- [Entity Resolution Guide](ENTITY_RESOLUTION.md)
 
-struct MyEntityResolver {
-    // Your gRPC clients or other resolution logic
-}
+---
 
-#[async_trait::async_trait]
-impl EntityResolver for MyEntityResolver {
-    async fn resolve_entity(
-        &self,
-        entity_config: &EntityConfig,
-        representation: &IndexMap<Name, Value>,
-    ) -> Result<Value> {
-        // 1. Extract key fields from representation
-        // 2. Call appropriate gRPC service
-        // 3. Return resolved entity
-        todo!("Implement entity resolution")
-    }
-}
-```
-
-### Federation Schema Features
-
-When federation is enabled, the gateway automatically:
-- ✅ Adds `@key` directives to entity types
-- ✅ Adds `@extends` directive to entity extensions
-- ✅ Adds `@external`, `@requires`, `@provides`, `@shareable` directives to fields
-- ✅ Exposes `_entities(representations: [_Any!]!)` query
-- ✅ Exposes `_service { sdl }` query (via async-graphql)
-- ✅ Registers entity types in the `_Entity` union
-
-### Example: Federated Microservices
-
-See `proto/federation_example.proto` for a complete example showing:
-- User service (defines the User entity)
-- Product service (defines Product entity, references User)
-- Review service (extends both User and Product entities)
-
-Each service can be deployed independently while participating in a unified federated graph.
-
-### Running the federation example with Apollo Router
-
-Use Apollo Router in front of the federated subgraph exposed by `cargo run --bin federation`:
-
-1. Start the gRPC services + three GraphQL subgraphs:
-   ```bash
-   cargo run --bin federation
-   ```
-2. Compose a supergraph schema (requires the `rover` CLI):
-   ```bash
-   ./examples/federation/compose_supergraph.sh
-   # writes: examples/federation/supergraph.graphql
-   ```
-3. Run Apollo Router with the composed file (default port `4000`):
-   ```bash
-   router --supergraph examples/federation/supergraph.graphql --dev
-   ```
-4. Send requests to the router at `http://127.0.0.1:4000/` (or hit the subgraphs directly if you skip the router). The router hides the `_entities` helper; if you want to call `_entities` directly, target the owning subgraph (e.g., `http://127.0.0.1:8891/graphql` for `federation_example_User`).
-
-### Federation Best Practices
-
-1. **Define clear entity boundaries**: Each service should own its entities
-2. **Use composite keys when needed**: For entities with multiple identifying fields
-3. **Mark external fields correctly**: Avoid duplicating field resolution logic
-4. **Use `@provides` sparingly**: Only when you're returning partial entities
-5. **Keep `@requires` minimal**: Only specify fields you actually need
-6. **Mark shared fields as `@shareable`**: When the same field is resolved in multiple subgraphs, explicitly mark it with `shareable: true`
-
-
-## Development
-- Format: `cargo fmt`
-- Lint/tests: `cargo test`
-- A runnable example lives at `examples/greeter`, wired up to `proto/greeter.proto` (query/mutation/subscription/resolver).
-
-## License
-MIT. See [LICENSE](./LICENSE).
+**Made with ❤️ by Protocol Lattice**
