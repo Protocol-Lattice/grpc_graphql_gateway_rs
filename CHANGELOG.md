@@ -5,44 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.2] - 2025-12-04
 
 ### Added
-- Initial Rust implementation of grpc-graphql-gateway
-- Support for GraphQL queries from gRPC unary calls
-- Support for GraphQL mutations from gRPC unary calls
-- Support for GraphQL subscriptions from gRPC streaming calls
-- WebSocket support for GraphQL subscriptions (graphql-ws protocol)
-- Middleware system for authentication, logging, etc.
-- gRPC client connection pooling
-- Comprehensive error handling with GraphQL error formatting
-- Axum-based HTTP server with routing
-- Example greeter service demonstrating all features
-- Full async/await support with Tokio runtime
-- **GraphQL Federation v2 support**
-  - Entity definitions via `graphql.entity` proto option
-  - Entity key support (single and composite keys)
-  - Entity extensions with `@extends` directive
-  - Field-level federation directives: `@external`, `@requires`, `@provides`
-  - Automatic `_entities` query generation for entity resolution
-  - `EntityResolver` trait for custom entity resolution logic
-  - Federation example in `proto/federation_example.proto`
-  - Comprehensive federation documentation
+- **EntityDataLoader**: Built-in DataLoader for batching entity resolution requests to prevent N+1 query problems.
+- **Documentation**: Comprehensive Rustdoc documentation across all public APIs and internal modules.
+- **Examples**: Enhanced federation example demonstrating `EntityDataLoader` usage and batching.
 
-### Architecture
-- `gateway` module - Main orchestration and builder
-- `runtime` module - ServeMux for handling HTTP and WebSocket requests
-- `schema` module - GraphQL schema building from gRPC services
-- `grpc_client` module - gRPC client connection management
-- `middleware` module - Middleware support (CORS, auth, logging)
-- `error` module - Error types and GraphQL error formatting
-- `types` module - Core type definitions
+### Improved
+- **README**: Completely rewritten README with better structure, modern formatting, and detailed examples.
+- **Federation**: Added `batch_resolve_entities` support to `EntityResolver` trait.
 
-### Performance
-- Zero-cost abstractions leveraging Rust's type system
-- Compile-time guarantees for memory safety
-- Efficient async I/O with Tokio
-- Connection pooling for gRPC clients
+## [0.1.1] - 2025-12-04
+
+### Added
+- **Federation v2**: Full support for `@shareable` directive in proto options and schema generation.
+- **Entity Resolution**: Production-ready `GrpcEntityResolver` with `EntityResolverMapping` for mapping entities to gRPC methods.
+- **Builder**: `GrpcEntityResolverBuilder` for easier configuration of entity resolvers.
+
+### Fixed
+- **Composition**: Resolved `INVALID_FIELD_SHARING` errors by correctly applying `@shareable` directive.
 
 ## [0.1.0] - 2024-12-02
 
@@ -53,6 +35,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Subscription support via WebSocket
 - Middleware system
 - Example implementation
+- **GraphQL Federation v2 support**
+  - Entity definitions via `graphql.entity` proto option
+  - Entity key support (single and composite keys)
+  - Entity extensions with `@extends` directive
+  - Field-level federation directives: `@external`, `@requires`, `@provides`
+  - Automatic `_entities` query generation for entity resolution
+  - `EntityResolver` trait for custom entity resolution logic
 
-[Unreleased]: https://github.com/Protocol-Lattice/grpc-graphql-gateway-rs/compare/v0.1.0...HEAD
+[0.1.2]: https://github.com/Protocol-Lattice/grpc-graphql-gateway-rs/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/Protocol-Lattice/grpc-graphql-gateway-rs/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Protocol-Lattice/grpc-graphql-gateway-rs/releases/tag/v0.1.0
