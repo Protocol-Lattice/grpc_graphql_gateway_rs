@@ -5,8 +5,8 @@
 use grpc_graphql_gateway::graphql::{GraphqlSchema, GraphqlService, GraphqlType};
 use prost::Message;
 use prost_reflect::{DescriptorPool, DynamicMessage, ExtensionDescriptor, Value};
-use prost_types::compiler::{code_generator_response, CodeGeneratorRequest, CodeGeneratorResponse};
-use prost_types::FileDescriptorSet;
+use prost_types::compiler::{code_generator_response, CodeGeneratorResponse};
+
 use std::collections::HashSet;
 use std::io::{Read, Write};
 
@@ -35,11 +35,27 @@ struct TemplateOptions {
     descriptor_path: Option<String>,
 }
 
+#[derive(Clone, PartialEq, ::prost::Message)]
+struct RawCodeGeneratorRequest {
+    #[prost(string, repeated, tag = "1")]
+    pub file_to_generate: ::prost::alloc::vec::Vec<String>,
+    #[prost(string, optional, tag = "2")]
+    pub parameter: Option<String>,
+    #[prost(bytes, repeated, tag = "15")]
+    pub proto_file: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+}
+
+#[derive(Clone, PartialEq, ::prost::Message)]
+struct RawFileDescriptorSet {
+    #[prost(bytes, repeated, tag = "1")]
+    pub file: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Read CodeGeneratorRequest from stdin
     let mut input = Vec::new();
     std::io::stdin().read_to_end(&mut input)?;
-    let request = CodeGeneratorRequest::decode(&*input)?;
+    let request = RawCodeGeneratorRequest::decode(&*input)?;
 
     let options = parse_options(request.parameter.as_deref());
     let pool = build_descriptor_pool(&request)?;
@@ -78,9 +94,9 @@ fn parse_options(param: Option<&str>) -> TemplateOptions {
 }
 
 fn build_descriptor_pool(
-    request: &CodeGeneratorRequest,
+    request: &RawCodeGeneratorRequest,
 ) -> Result<DescriptorPool, Box<dyn std::error::Error>> {
-    let fds = FileDescriptorSet {
+    let fds = RawFileDescriptorSet {
         file: request.proto_file.clone(),
     };
     let mut bytes = Vec::new();
@@ -92,7 +108,7 @@ fn build_descriptor_pool(
 /// GraphQL operations (queries, mutations, subscriptions, resolvers).
 fn collect_services(
     pool: &DescriptorPool,
-    request: &CodeGeneratorRequest,
+    request: &RawCodeGeneratorRequest,
 ) -> Result<Vec<ServiceInfo>, Box<dyn std::error::Error>> {
     let targets: HashSet<&str> = request
         .file_to_generate
@@ -172,6 +188,8 @@ fn decode_extension<T: Message + Default>(
 
     Ok(None)
 }
+
+
 
 /// Render the Rust template that wires the gateway together.
 fn render_template(
