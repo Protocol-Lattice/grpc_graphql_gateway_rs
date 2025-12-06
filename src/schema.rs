@@ -639,7 +639,8 @@ fn type_for_field(
 
 fn placeholder_query_root() -> Object {
     let ty = TypeRef::NonNull(Box::new(TypeRef::named(TypeRef::BOOLEAN)));
-    let field = Field::new("__placeholder", ty, |_| {
+    // Single underscore avoids clashing with GraphQL introspection (__*) while keeping this internal.
+    let field = Field::new("_placeholder", ty, |_| {
         FieldFuture::new(async { Ok(Some(GqlValue::Boolean(true))) })
     });
     Object::new("Query").field(field)
