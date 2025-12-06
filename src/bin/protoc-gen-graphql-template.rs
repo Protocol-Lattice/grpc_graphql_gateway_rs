@@ -269,9 +269,9 @@ fn render_template(
     buf.push_str("type ServiceResult<T> = std::result::Result<T, Status>;\n\n");
     let descriptor_expr = options
         .descriptor_path
-        .as_ref()
-        .map(|p| format!("\"{}\"", p.escape_default()))
-        .unwrap_or_else(|| "\"./greeter_descriptor.bin\"".to_string());
+        .as_deref()
+        .map(render_str_literal)
+        .unwrap_or_else(|| render_str_literal(&default_descriptor_path(services, files)));
     buf.push_str(&format!(
         "const DESCRIPTOR_SET: &[u8] = include_bytes!({descriptor_expr});\n\n"
     ));
@@ -509,6 +509,26 @@ fn render_template(
     buf.push_str("}\n");
 
     buf
+}
+
+fn default_descriptor_path(services: &[ServiceInfo], files: &[String]) -> String {
+    if let Some(pkg) = services
+        .iter()
+        .find_map(|svc| svc.full_name.rsplit_once('.').map(|(pkg, _)| pkg))
+        .filter(|pkg| !pkg.is_empty())
+    {
+        return format!("./{}_descriptor.bin", pkg.replace('.', "_"));
+    }
+
+    if let Some(stem) = files.iter().find_map(|file| {
+        std::path::Path::new(file)
+            .file_stem()
+            .and_then(|s| s.to_str())
+    }) {
+        return format!("./{}_descriptor.bin", stem);
+    }
+
+    "./descriptor.bin".to_string()
 }
 
 fn render_str_literal(input: &str) -> String {

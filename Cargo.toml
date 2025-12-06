@@ -75,6 +75,11 @@ path = "examples/greeter/main.rs"
 name = "federation"
 path = "examples/federation/main.rs"
 
+[[example]]
+name = "graphql"
+path = "examples/graphql/main.rs"
+
+
 [[bin]]
 name = "greeter"
 path = "examples/greeter/main.rs"
