@@ -1,6 +1,6 @@
 [package]
 name = "grpc_graphql_gateway"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 authors = ["Protocol Lattice"]
 description = "A Rust implementation of gRPC-GraphQL gateway - generates GraphQL execution code from gRPC services"
@@ -74,6 +74,11 @@ path = "examples/greeter/main.rs"
 [[example]]
 name = "federation"
 path = "examples/federation/main.rs"
+
+[[example]]
+name = "graphql"
+path = "examples/graphql/main.rs"
+
 
 [[bin]]
 name = "greeter"

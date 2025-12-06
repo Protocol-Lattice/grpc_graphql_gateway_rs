@@ -396,12 +396,11 @@ rpc ListUsers(ListUsersRequest) returns (ListUsersResponse) {
 Generate a starter gateway:
 
 ```bash
-# Build the generator
-cargo build --bin protoc-gen-graphql-template
+# Install the generator
+cargo install grpc-graphql-gateway --bin protoc-gen-graphql-template
 
 # Generate gateway code
 protoc \
-  --plugin=protoc-gen-graphql-template=target/debug/protoc-gen-graphql-template \
   --graphql-template_out=. \
   --proto_path=proto \
   your_service.proto

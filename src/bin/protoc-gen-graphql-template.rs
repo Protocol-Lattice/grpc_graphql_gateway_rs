@@ -10,6 +10,16 @@ use prost_types::compiler::{code_generator_response, CodeGeneratorResponse};
 use std::collections::HashSet;
 use std::io::{Read, Write};
 
+#[derive(Debug, Clone)]
+struct MethodInfo {
+    name: String,
+    proto_name: String,
+    input_type: String,
+    output_type: String,
+    client_streaming: bool,
+    server_streaming: bool,
+}
+
 /// Collected service metadata for template generation.
 #[derive(Debug, Clone)]
 struct ServiceInfo {
@@ -20,6 +30,7 @@ struct ServiceInfo {
     /// Whether to connect insecurely (defaults to true if not provided)
     insecure: bool,
     ops: OperationBuckets,
+    methods: Vec<MethodInfo>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -62,9 +73,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let services = collect_services(&pool, &request)?;
     let content = render_template(&services, &request.file_to_generate, &options);
 
+    let filename = if let Some(svc) = services.first() {
+        let service_name = svc.full_name.split('.').last().unwrap_or(&svc.full_name);
+        format!("{}_graphql_gateway.rs", to_snake_case(service_name))
+    } else {
+        "graphql_gateway.rs".to_string()
+    };
+
     let response = CodeGeneratorResponse {
         file: vec![code_generator_response::File {
-            name: Some("graphql_gateway.rs".to_string()),
+            name: Some(filename),
             insertion_point: None,
             content: Some(content),
             generated_code_info: None,
@@ -121,7 +139,30 @@ fn collect_services(
 
     let mut services = Vec::new();
     for svc in pool.services() {
-        if !targets.contains(svc.parent_file().name()) {
+        let parent_file = svc.parent_file();
+        let file_name = parent_file.name();
+        
+        // Check if this file is one of the targets.
+        // We use a loose match because protoc might pass `proto/file.proto` as the target
+        // but the descriptor might say `file.proto` (or vice versa) depending on -I args.
+        let mut is_target = targets.contains(file_name);
+        if !is_target {
+            for t in &targets {
+                if t.ends_with(file_name) || file_name.ends_with(*t) {
+                    is_target = true;
+                    break;
+                }
+                // Normalize slashes just in case
+                let t_norm = t.replace('\\', "/");
+                let f_norm = file_name.replace('\\', "/");
+                if t_norm.ends_with(&f_norm) || f_norm.ends_with(&t_norm) {
+                    is_target = true;
+                    break;
+                }
+            }
+        }
+
+        if !is_target {
             continue;
         }
 
@@ -130,6 +171,7 @@ fn collect_services(
             endpoint: None,
             insecure: true,
             ops: OperationBuckets::default(),
+            methods: Vec::new(),
         };
 
         if let Some(ext) = service_ext.as_ref() {
@@ -141,8 +183,17 @@ fn collect_services(
             }
         }
 
-        if let Some(method_ext) = method_ext.as_ref() {
-            for method in svc.methods() {
+        for method in svc.methods() {
+            info.methods.push(MethodInfo {
+                name: to_snake_case(method.name()),
+                proto_name: method.name().to_string(),
+                input_type: resolve_type(method.input()),
+                output_type: resolve_type(method.output()),
+                client_streaming: method.is_client_streaming(),
+                server_streaming: method.is_server_streaming(),
+            });
+
+            if let Some(method_ext) = method_ext.as_ref() {
                 let Some(schema_opts) =
                     decode_extension::<GraphqlSchema>(&method.options(), method_ext)?
                 else {
@@ -210,13 +261,17 @@ fn render_template(
     buf.push_str("//\n");
     buf.push_str("// This is a starter gateway. Update endpoint URLs and tweak as needed.\n\n");
 
-    buf.push_str("use grpc_graphql_gateway::{Gateway, GatewayBuilder, GrpcClient, Result};\n");
+    buf.push_str("use grpc_graphql_gateway::{Gateway, GatewayBuilder, GrpcClient, Result as GatewayResult};\n");
+    buf.push_str("use std::net::SocketAddr;\n");
+    buf.push_str("use std::pin::Pin;\n");
+    buf.push_str("use tonic::{transport::Server, Request, Response, Status};\n");
     buf.push_str("use tracing_subscriber::prelude::*;\n\n");
+    buf.push_str("type ServiceResult<T> = std::result::Result<T, Status>;\n\n");
     let descriptor_expr = options
         .descriptor_path
-        .as_ref()
-        .map(|p| format!("\"{}\"", p.escape_default()))
-        .unwrap_or_else(|| "concat!(env!(\"OUT_DIR\"), \"/graphql_descriptor.bin\")".to_string());
+        .as_deref()
+        .map(render_str_literal)
+        .unwrap_or_else(|| render_str_literal(&default_descriptor_path(services, files)));
     buf.push_str(&format!(
         "const DESCRIPTOR_SET: &[u8] = include_bytes!({descriptor_expr});\n\n"
     ));
@@ -238,19 +293,53 @@ fn render_template(
         render_str_slice(&all_subscriptions)
     ));
 
-    buf.push_str("struct ServiceConfig {\n");
-    buf.push_str("    name: &'static str,\n");
-    buf.push_str("    endpoint: &'static str,\n");
-    buf.push_str("    insecure: bool,\n");
-    buf.push_str("    queries: &'static [&'static str],\n");
-    buf.push_str("    mutations: &'static [&'static str],\n");
-    buf.push_str("    subscriptions: &'static [&'static str],\n");
-    buf.push_str("    resolvers: &'static [&'static str],\n");
+    // Generate modules for the proto packages
+    let mut packages = std::collections::BTreeSet::new();
+    for svc in services {
+        if let Some((pkg, _)) = svc.full_name.rsplit_once('.') {
+            packages.insert(pkg);
+        }
+    }
+
+    for pkg in packages {
+        let mod_name = pkg.replace('.', "_");
+        buf.push_str(&format!("pub mod {} {{\n", mod_name));
+        buf.push_str(&format!("    include!(\"./{}.rs\");\n", pkg));
+        buf.push_str("}\n\n");
+    }
+
+    // Generate use statements for the service traits
+    for svc in services {
+        if let Some((pkg, svc_name)) = svc.full_name.rsplit_once('.') {
+            let mod_name = pkg.replace('.', "_");
+            let server_mod = format!("{}_server", to_snake_case(svc_name));
+            buf.push_str(&format!(
+                "use {}::{}::{{{}, {}Server}};\n",
+                mod_name, server_mod, svc_name, svc_name
+            ));
+        }
+    }
+    buf.push_str("\n");
+
+    buf.push_str("pub struct ServiceConfig {\n");
+    buf.push_str("    pub name: &'static str,\n");
+    buf.push_str("    pub endpoint: &'static str,\n");
+    buf.push_str("    pub insecure: bool,\n");
+    buf.push_str("    pub queries: &'static [&'static str],\n");
+    buf.push_str("    pub mutations: &'static [&'static str],\n");
+    buf.push_str("    pub subscriptions: &'static [&'static str],\n");
+    buf.push_str("    pub resolvers: &'static [&'static str],\n");
     buf.push_str("}\n\n");
 
-    buf.push_str("const SERVICES: &[ServiceConfig] = &[\n");
+    buf.push_str("pub mod services {\n");
+    buf.push_str("    use super::ServiceConfig;\n\n");
+
+    let mut service_consts = Vec::new();
     for svc in services {
-        buf.push_str("    ServiceConfig {\n");
+        let const_name = svc.full_name.replace('.', "_").to_uppercase();
+        service_consts.push(const_name.clone());
+
+        buf.push_str(&format!("    pub const {}: ServiceConfig = ServiceConfig {{\n", const_name));
         buf.push_str(&format!(
             "        name: {},\n",
             render_str_literal(&svc.full_name)
@@ -277,11 +366,95 @@ fn render_template(
             "        resolvers: {},\n",
             render_str_slice(&svc.ops.resolvers)
         ));
-        buf.push_str("    },\n");
+        buf.push_str("    };\n");
     }
-    buf.push_str("];\n\n");
 
-    buf.push_str("pub fn gateway_builder() -> Result<GatewayBuilder> {\n");
+    buf.push_str("\n    pub const ALL: &[ServiceConfig] = &[\n");
+    for name in service_consts {
+        buf.push_str(&format!("        {},\n", name));
+    }
+    buf.push_str("    ];\n");
+    buf.push_str("}\n\n");
+
+    // Scaffolding for service implementation
+    buf.push_str("/// Scaffolding for gRPC service implementations.\n");
+    buf.push_str("#[derive(Default, Clone)]\n");
+    buf.push_str("pub struct ServiceImpl;\n\n");
+
+    for svc in services {
+        let (pkg, svc_name) = svc.full_name.rsplit_once('.')
+            .unwrap_or(("", &svc.full_name));
+
+        let mod_name = pkg.replace('.', "_");
+        let server_mod = format!("{}_server", to_snake_case(svc_name));
+        let trait_name = svc_name;
+        
+        let trait_path = if mod_name.is_empty() {
+            format!("{}::{}", server_mod, trait_name)
+        } else {
+            format!("{}::{}::{}", mod_name, server_mod, trait_name)
+        };
+        
+        buf.push_str("#[tonic::async_trait]\n");
+        buf.push_str(&format!("impl {} for ServiceImpl {{\n", trait_path));
+        
+        // Define associated types for streaming response methods
+        for method in &svc.methods {
+            if method.server_streaming {
+                let stream_type = format!("{}Stream", method.proto_name);
+                buf.push_str(&format!("    type {} = Pin<Box<dyn futures::Stream<Item = ServiceResult<{}>> + Send>>;\n", stream_type, method.output_type));
+            }
+        }
+
+        for method in &svc.methods {
+            let input_arg = if method.client_streaming {
+                format!("tonic::Streaming<{}>", method.input_type)
+            } else {
+                method.input_type.clone()
+            };
+
+            let return_type = if method.server_streaming {
+                format!("Self::{}Stream", method.proto_name)
+            } else {
+                method.output_type.clone()
+            };
+
+            buf.push_str(&format!("    async fn {}(&self, _request: Request<{}>) -> ServiceResult<Response<{}>> {{\n", method.name, input_arg, return_type));
+            buf.push_str("        Err(Status::unimplemented(\"method not implemented\"))\n");
+            buf.push_str("    }\n");
+        }
+        buf.push_str("}\n\n");
+    }
+
+    buf.push_str("pub async fn run_services() -> GatewayResult<()> {\n");
+    buf.push_str("    let addr: SocketAddr = \"0.0.0.0:50051\"\n");
+    buf.push_str("        .parse()\n");
+    buf.push_str("        .map_err(|e| grpc_graphql_gateway::Error::Other(anyhow::Error::new(e)))?;\n");
+    buf.push_str("    let service = ServiceImpl::default();\n");
+    buf.push_str("    tracing::info!(\"gRPC services listening on {}\", addr);\n");
+    buf.push_str("    Server::builder()\n");
+    
+    for svc in services {
+         let (pkg, svc_name) = svc.full_name.rsplit_once('.')
+             .unwrap_or(("", &svc.full_name));
+
+         let mod_name = pkg.replace('.', "_");
+         let server_mod = format!("{}_server", to_snake_case(svc_name));
+         let server_struct = format!("{}Server", svc_name);
+         
+         if mod_name.is_empty() {
+             buf.push_str(&format!("        .add_service({}::{}::new(service.clone()))\n", server_mod, server_struct));
+         } else {
+             buf.push_str(&format!("        .add_service({}::{}::{}::new(service.clone()))\n", mod_name, server_mod, server_struct));
+         }
+    }
+    
+    buf.push_str("        .serve(addr)\n");
+    buf.push_str("        .await?;\n");
+    buf.push_str("    Ok(())\n");
+    buf.push_str("}\n\n");
+
+    buf.push_str("pub fn gateway_builder() -> GatewayResult<GatewayBuilder> {\n");
     buf.push_str("    // The descriptor set is produced by your build.rs using tonic-build.\n");
     buf.push_str("    let mut builder = Gateway::builder()\n");
     buf.push_str("        .with_descriptor_set_bytes(DESCRIPTOR_SET);\n\n");
@@ -294,8 +467,7 @@ fn render_template(
         buf.push_str("    // );\n");
     } else {
         buf.push_str("    // Add gRPC backends for each service discovered in your protos.\n");
-        buf.push_str("    let mut clients = Vec::new();\n");
-        buf.push_str("    for svc in SERVICES {\n");
+        buf.push_str("    for svc in services::ALL {\n");
         buf.push_str("        tracing::info!(\n");
         buf.push_str("            \"{svc} -> {endpoint} (queries: {queries}; mutations: {mutations}; subscriptions: {subscriptions}; resolvers: {resolvers})\",\n");
         buf.push_str("            svc = svc.name,\n");
@@ -305,22 +477,19 @@ fn render_template(
         buf.push_str("            subscriptions = describe(svc.subscriptions),\n");
         buf.push_str("            resolvers = describe(svc.resolvers),\n");
         buf.push_str("        );\n");
-        buf.push_str("        clients.push((\n");
-        buf.push_str("            svc.name.to_string(),\n");
-        buf.push_str("            GrpcClient::builder(svc.endpoint)\n");
-        buf.push_str("                .insecure(svc.insecure)\n");
-        buf.push_str("                .lazy(true)\n");
-        buf.push_str("                .connect_lazy()?,\n");
-        buf.push_str("        ));\n");
+        buf.push_str("        let client = GrpcClient::builder(svc.endpoint)\n");
+        buf.push_str("            .insecure(svc.insecure)\n");
+        buf.push_str("            .lazy(true)\n");
+        buf.push_str("            .connect_lazy()?;\n");
+        buf.push_str("        builder = builder.add_grpc_client(svc.name, client);\n");
         buf.push_str("    }\n");
-        buf.push_str("    builder = builder.add_grpc_clients(clients);\n");
         buf.push_str("\n    // Update the endpoints above to point at your actual services.\n");
     }
 
     buf.push_str("\n    Ok(builder)\n}\n\n");
 
     buf.push_str("#[tokio::main]\n");
-    buf.push_str("async fn main() -> Result<()> {\n");
+    buf.push_str("async fn main() -> GatewayResult<()> {\n");
     buf.push_str("    // Basic logging; adjust as desired.\n");
     buf.push_str("    tracing_subscriber::registry()\n");
     buf.push_str("        .with(tracing_subscriber::fmt::layer())\n");
@@ -332,12 +501,34 @@ fn render_template(
     buf.push_str("        subscriptions = describe(SUBSCRIPTIONS),\n");
     buf.push_str("    );\n\n");
     buf.push_str("    // NOTE: Resolver entries are listed above; the runtime currently warns that they are not implemented.\n");
+    buf.push_str("    // Uncomment to run the services in the same process:\n");
+    buf.push_str("    tokio::spawn(async { run_services().await.unwrap(); });\n\n");
     buf.push_str("    gateway_builder()?\n");
     buf.push_str("        .serve(\"0.0.0.0:8888\")\n");
     buf.push_str("        .await\n");
     buf.push_str("}\n");
 
     buf
+}
+
+fn default_descriptor_path(services: &[ServiceInfo], files: &[String]) -> String {
+    if let Some(pkg) = services
+        .iter()
+        .find_map(|svc| svc.full_name.rsplit_once('.').map(|(pkg, _)| pkg))
+        .filter(|pkg| !pkg.is_empty())
+    {
+        return format!("./{}_descriptor.bin", pkg.replace('.', "_"));
+    }
+
+    if let Some(stem) = files.iter().find_map(|file| {
+        std::path::Path::new(file)
+            .file_stem()
+            .and_then(|s| s.to_str())
+    }) {
+        return format!("./{}_descriptor.bin", stem);
+    }
+
+    "./descriptor.bin".to_string()
 }
 
 fn render_str_literal(input: &str) -> String {
@@ -368,4 +559,46 @@ where
         }
     }
     set.into_iter().collect()
+}
+
+fn to_snake_case(s: &str) -> String {
+    let mut result = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if c.is_uppercase() {
+            if i > 0 {
+                result.push('_');
+            }
+            result.push(c.to_ascii_lowercase());
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+fn resolve_type(msg: prost_reflect::MessageDescriptor) -> String {
+    let parent = msg.parent_file();
+    let pkg = parent.package_name();
+    let full = msg.full_name();
+    let pkg_mod = pkg.replace('.', "_");
+    
+    let relative = if pkg.is_empty() {
+        full
+    } else {
+        &full[pkg.len() + 1..]
+    };
+    
+    let parts: Vec<&str> = relative.split('.').collect();
+    let mut rust_path = pkg_mod;
+    
+    for (i, part) in parts.iter().enumerate() {
+        rust_path.push_str("::");
+        if i < parts.len() - 1 {
+            rust_path.push_str(&to_snake_case(part));
+        } else {
+            rust_path.push_str(part);
+        }
+    }
+    
+    rust_path
 }
