@@ -271,7 +271,7 @@ fn render_template(
         .descriptor_path
         .as_ref()
         .map(|p| format!("\"{}\"", p.escape_default()))
-        .unwrap_or_else(|| "\"./graphql_descriptor.bin\"".to_string());
+        .unwrap_or_else(|| "\"./greeter_descriptor.bin\"".to_string());
     buf.push_str(&format!(
         "const DESCRIPTOR_SET: &[u8] = include_bytes!({descriptor_expr});\n\n"
     ));
@@ -500,12 +500,9 @@ fn render_template(
     buf.push_str("        mutations = describe(MUTATIONS),\n");
     buf.push_str("        subscriptions = describe(SUBSCRIPTIONS),\n");
     buf.push_str("    );\n\n");
-    if !services.is_empty() {
-        buf.push_str("    // Run the demo gRPC services alongside the gateway so the sample schema resolves.\n");
-        buf.push_str("    tokio::spawn(async { run_services().await.unwrap(); });\n\n");
-    } else {
-        buf.push_str("    // No services were found; start your gRPC backends separately and update endpoints above.\n\n");
-    }
+    buf.push_str("    // NOTE: Resolver entries are listed above; the runtime currently warns that they are not implemented.\n");
+    buf.push_str("    // Uncomment to run the services in the same process:\n");
+    buf.push_str("    tokio::spawn(async { run_services().await.unwrap(); });\n\n");
     buf.push_str("    gateway_builder()?\n");
     buf.push_str("        .serve(\"0.0.0.0:8888\")\n");
     buf.push_str("        .await\n");
